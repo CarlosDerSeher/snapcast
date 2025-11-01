@@ -77,7 +77,9 @@ Please follow this [guide](doc/build.md) to build Snapcast for
 - [OpenWrt](doc/build.md#openwrtlede-cross-compile)
 - [Buildroot](doc/build.md#buildroot-cross-compile)
 - [Raspberry Pi](doc/build.md#raspberry-pi-cross-compile)
+- [webOS](doc/build.md#webos-cross-compile)
 - [Windows](doc/build.md#windows-vcpkg)
+
 
 ## Configuration
 
@@ -121,6 +123,7 @@ Available audio backends are configured using the `--player` command line parame
 | opensl    | Android | OpenSL ES | |
 | coreaudio | macOS   | Core Audio | |
 | wasapi    | Windows | Windows Audio Session API | |
+| webos     | webOS   | SDL2 Audio for LG webOS TVs | |
 | file      | All     | Write audio to file | `filename=<filename>` (`<filename>` = `stdout`, `stderr`, `null` or a filename)<br>`mode=[w\|a]` (`w`: write (discarding the content), `a`: append (keeping the content) |
 
 Parameters are appended to the player name, e.g. `--player alsa:buffer_time=100`. Use `--player <name>:?` to get a list of available options.  

@@ -223,3 +223,38 @@ To cross compile for OpenWrt, please follow the [OpenWrt flavored SnapOS guide](
 ### Buildroot (Cross compile)
 
 To integrate Snapcast into [Buildroot](https://buildroot.org/), please follow the [Buildroot flavored SnapOS guide](https://github.com/badaix/snapos/blob/master/buildroot-external/README.md)
+
+### webOS (Cross compile)
+
+To cross compile Snapcast client for LG webOS TVs, you need the webOS SDK and toolchain.
+
+#### Prerequisites
+
+1. Install the [openlgtv buildroot toolchain](https://github.com/openlgtv/buildroot-nc4)
+
+
+#### Build Steps
+
+1. Configure the build for webOS target:
+
+```sh
+mkdir build-webos
+cd build-webos
+
+# Configure with webOS toolchain
+cmake .. \
+    -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE=/path/to/openlgtv/toolchain.cmake \
+    -DTARGET_WEBOS=ON \
+    -DBUILD_SERVER=OFF \
+    -DBUILD_CLIENT=ON \
+    -DBUILD_WITH_ALSA=OFF \
+    -DBUILD_WITH_PULSE=OFF \
+    -DBUILD_WITH_PIPEWIRE=OFF
+```
+
+2. Build the client:
+
+```sh
+cmake --build -j
+```
