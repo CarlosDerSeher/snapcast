@@ -32,7 +32,7 @@
 namespace player
 {
 
-static constexpr auto WEBOS = "webos";
+static constexpr auto SDL2 = "sdl2";
 
 /// WebOS Audio Player
 /**
