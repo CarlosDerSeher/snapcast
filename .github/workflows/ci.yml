@@ -238,7 +238,7 @@ jobs:
         run: |
           sudo apt-get update && \
           sudo apt-get install -yq libasound2-dev libsoxr-dev libvorbisidec-dev libvorbis-dev libflac-dev \
-          libopus-dev alsa-utils libpulse-dev libjack-dev libavahi-client-dev libssl-dev \
+          libopus-dev alsa-utils libpulse-dev libjack-dev libavahi-client-dev libssl-dev libsdl2-dev \
           avahi-daemon ccache expat \
           libpipewire-0.3-dev
       - name: cache boost
@@ -274,6 +274,7 @@ jobs:
             -DBUILD_WITH_PULSE=ON \
             -DBUILD_WITH_JACK=ON \
             -DBUILD_WITH_PIPEWIRE=ON \
+            -DBUILD_WITH_SDL2=ON \
             -DCMAKE_CXX_FLAGS="-DCMAKE_CXX_FLAGS=-DJSON_HAS_CPP_14"
         env:
           CC: ${{ matrix.cc }}
