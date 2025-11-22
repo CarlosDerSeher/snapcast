@@ -174,7 +174,6 @@ jobs:
           - clang-16
           - clang-17
           - clang-18
-          - gcc-9
           - gcc-10
           - gcc-11
           - gcc-12
@@ -208,10 +207,6 @@ jobs:
             cc: clang-18
             cxx: clang++-18
             os: ubuntu-24.04
-          - compiler: gcc-9
-            cc: gcc-9
-            cxx: g++-9
-            os: ubuntu-22.04
           - compiler: gcc-10
             cc: gcc-10
             cxx: g++-10
