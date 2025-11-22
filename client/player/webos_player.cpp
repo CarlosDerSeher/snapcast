@@ -34,7 +34,7 @@ using namespace std;
 namespace player
 {
 
-static constexpr auto LOG_TAG = "WebOSPlayer";
+static constexpr auto LOG_TAG = "SDL2Player";
 
 WebOSPlayer::WebOSPlayer(boost::asio::io_context& io_context, const ClientSettings::Player& settings, std::shared_ptr<Stream> stream)
     : Player(io_context, settings, stream)

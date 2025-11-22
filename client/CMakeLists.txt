@@ -74,15 +74,9 @@ elseif(NOT ANDROID)
   endif(PIPEWIRE_FOUND)
 endif(MACOSX)
 
-# WebOS support
-if(TARGET_WEBOS)
-  add_compile_definitions(HAS_WEBOS)
+# SDL2 support
+if(SDL2_FOUND)
   list(APPEND CLIENT_SOURCES player/webos_player.cpp)
-  
-  # Find SDL2 for webOS audio
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(SDL2 REQUIRED sdl2)
-  
   list(APPEND CLIENT_LIBRARIES ${SDL2_LIBRARIES})
   include_directories(${SDL2_INCLUDE_DIRS})
   link_directories(${SDL2_LIBRARY_DIRS})
