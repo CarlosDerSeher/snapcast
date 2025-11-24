@@ -58,7 +58,7 @@
 #include "player/pipewire_player.hpp"
 #endif
 #ifdef HAS_SDL2
-#include "player/webos_player.hpp"
+#include "player/sdl2_player.hpp"
 #endif
 
 #include "player/file_player.hpp"
@@ -288,7 +288,7 @@ void Controller::getNextMessage()
 #endif
 #ifdef HAS_SDL2
             if (!player_)
-                player_ = createPlayer<WebOSPlayer>(settings_.player, player::SDL2);
+                player_ = createPlayer<Sdl2Player>(settings_.player, player::SDL2);
 #endif
 
             if (!player_ && (settings_.player.player_name == player::FILE))

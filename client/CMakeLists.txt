@@ -76,7 +76,7 @@ endif(MACOSX)
 
 # SDL2 support
 if(SDL2_FOUND)
-  list(APPEND CLIENT_SOURCES player/webos_player.cpp)
+  list(APPEND CLIENT_SOURCES player/sdl2_player.cpp)
   list(APPEND CLIENT_LIBRARIES ${SDL2_LIBRARIES})
   include_directories(${SDL2_INCLUDE_DIRS})
   link_directories(${SDL2_LIBRARY_DIRS})

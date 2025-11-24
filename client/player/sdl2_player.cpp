@@ -18,7 +18,7 @@
 ***/
 
 // prototype/interface header file
-#include "webos_player.hpp"
+#include "sdl2_player.hpp"
 
 // local headers
 #include "common/aixlog.hpp"
@@ -38,57 +38,57 @@ namespace player
 static constexpr auto LOG_TAG = "SDL2Player";
 static constexpr auto LATENCY = 30ms;
 
-WebOSPlayer::WebOSPlayer(boost::asio::io_context& io_context, const ClientSettings::Player& settings, std::shared_ptr<Stream> stream)
+Sdl2Player::Sdl2Player(boost::asio::io_context& io_context, const ClientSettings::Player& settings, std::shared_ptr<Stream> stream)
     : Player(io_context, settings, std::move(stream)), audio_device_(0), initialized_(false)
 {
-    LOG(INFO, LOG_TAG) << "WebOSPlayer created\n";
+    LOG(INFO, LOG_TAG) << "Sdl2Player created\n";
 }
 
 
-WebOSPlayer::~WebOSPlayer()
+Sdl2Player::~Sdl2Player()
 {
     stop();
     cleanupAudio();
-    LOG(INFO, LOG_TAG) << "WebOSPlayer destroyed\n";
+    LOG(INFO, LOG_TAG) << "Sdl2Player destroyed\n";
 }
 
 
-bool WebOSPlayer::needsThread() const
+bool Sdl2Player::needsThread() const
 {
     return false;
 }
 
 
-void WebOSPlayer::start()
+void Sdl2Player::start()
 {
-    LOG(INFO, LOG_TAG) << "Starting WebOS player\n";
+    LOG(INFO, LOG_TAG) << "Starting SDL2 player\n";
 
     if (!initializeAudio())
-        throw SnapException("Failed to initialize WebOS audio");
+        throw SnapException("Failed to initialize SDL2 audio");
 
     Player::start();
 
     // Start SDL audio playback
     SDL_PauseAudioDevice(audio_device_, 0);
 
-    LOG(INFO, LOG_TAG) << "WebOS player started successfully\n";
+    LOG(INFO, LOG_TAG) << "SDL2 player started successfully\n";
 }
 
 
-void WebOSPlayer::stop()
+void Sdl2Player::stop()
 {
-    LOG(INFO, LOG_TAG) << "Stopping WebOS player\n";
+    LOG(INFO, LOG_TAG) << "Stopping SDL2 player\n";
 
     if (audio_device_ != 0)
         SDL_PauseAudioDevice(audio_device_, 1);
 
     Player::stop();
 
-    LOG(INFO, LOG_TAG) << "WebOS player stopped\n";
+    LOG(INFO, LOG_TAG) << "SDL2 player stopped\n";
 }
 
 
-bool WebOSPlayer::initializeAudio()
+bool Sdl2Player::initializeAudio()
 {
     LOG(INFO, LOG_TAG) << "Initializing SDL audio subsystem\n";
 
@@ -135,7 +135,7 @@ bool WebOSPlayer::initializeAudio()
 }
 
 
-void WebOSPlayer::cleanupAudio()
+void Sdl2Player::cleanupAudio()
 {
     if (audio_device_ != 0)
     {
@@ -153,9 +153,9 @@ void WebOSPlayer::cleanupAudio()
 }
 
 
-void WebOSPlayer::audio_callback(void* userdata, Uint8* stream, int len)
+void Sdl2Player::audio_callback(void* userdata, Uint8* stream, int len)
 {
-    auto* player = static_cast<WebOSPlayer*>(userdata);
+    auto* player = static_cast<Sdl2Player*>(userdata);
     if (!player)
     {
         // Fill with silence if not active
@@ -167,7 +167,7 @@ void WebOSPlayer::audio_callback(void* userdata, Uint8* stream, int len)
 }
 
 
-void WebOSPlayer::audioCallback(void* stream, int len)
+void Sdl2Player::audioCallback(void* stream, int len)
 {
     const auto& fmt = stream_->getFormat();
     auto frames = len / fmt.frameSize();

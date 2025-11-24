@@ -40,13 +40,13 @@ static constexpr auto SDL2 = "sdl2";
  * Audio player implementation using SDL2
  * Based on moonlight-tv's approach to webOS audio streaming
  */
-class WebOSPlayer : public Player
+class Sdl2Player : public Player
 {
 public:
     /// c'tor
-    WebOSPlayer(boost::asio::io_context& io_context, const ClientSettings::Player& settings, std::shared_ptr<Stream> stream);
+    Sdl2Player(boost::asio::io_context& io_context, const ClientSettings::Player& settings, std::shared_ptr<Stream> stream);
     /// d'tor
-    virtual ~WebOSPlayer();
+    virtual ~Sdl2Player();
 
     void start() override;
     void stop() override;
