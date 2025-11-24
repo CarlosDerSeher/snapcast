@@ -1,5 +1,26 @@
 # Snapcast changelog
 
+## Version 0.35.0
+
+### Features
+
+- Client: Add SDL2 player (PR #1460)
+
+### Bugfixes
+
+### General
+
+- CI: remove gcc-9
+
+### Contributors
+
+- @badaix
+- @malkstar
+
+_Johannes Pohl <snapcast@badaix.de>  Wed, 24 Dec 2025 00:13:37 +0200_
+
+# Snapcast changelog
+
 ## Version 0.34.0
 
 ### Features
