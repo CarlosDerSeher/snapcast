@@ -1,6 +1,7 @@
 /***
     This file is part of snapcast
     Copyright (C) 2014-2025  Johannes Pohl
+    Copyright (C) 2025  malkstar
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -27,16 +28,16 @@
 // standard headers
 #include <atomic>
 #include <memory>
-#include <thread>
+
 
 namespace player
 {
 
 static constexpr auto SDL2 = "sdl2";
 
-/// WebOS Audio Player
+/// SDL2 Audio Player
 /**
- * Audio player implementation for LG webOS using SDL2 audio subsystem
+ * Audio player implementation using SDL2
  * Based on moonlight-tv's approach to webOS audio streaming
  */
 class WebOSPlayer : public Player
@@ -51,36 +52,24 @@ public:
     void stop() override;
 
 protected:
-    void worker() override;
-    bool needsThread() const override
-    {
-        return true;
-    }
+    bool needsThread() const override;
 
 private:
     /// SDL audio callback function
-    static void audioCallback(void* userdata, Uint8* stream, int len);
-    
+    static void audio_callback(void* userdata, Uint8* stream, int len);
+
+    /// audio callback function
+    void audioCallback(void* stream, int len);
+
     /// Initialize SDL audio subsystem
     bool initializeAudio();
-    
+
     /// Cleanup SDL audio resources
     void cleanupAudio();
-    
-    /// Process audio data from stream
-    void processAudio();
 
     SDL_AudioDeviceID audio_device_;
     SDL_AudioSpec audio_spec_;
     std::atomic<bool> initialized_;
-    std::atomic<bool> audio_active_;
-    std::thread worker_thread_;
-    
-    // Audio buffer management
-    static constexpr size_t BUFFER_SIZE = 4096;
-    std::unique_ptr<char[]> audio_buffer_;
-    std::atomic<size_t> buffer_fill_;
-    mutable std::mutex buffer_mutex_;
 };
 
 } // namespace player
