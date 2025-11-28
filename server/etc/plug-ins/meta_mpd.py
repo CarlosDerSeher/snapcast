@@ -27,6 +27,8 @@
 # Dependencies:
 # - python-mpd2
 # - musicbrainzngs
+# - PyGObject
+# - dbus-python
 
 import os
 import sys
@@ -446,24 +448,29 @@ class MPDWrapper(object):
                  "code": -32700, "message": "Parse error", "data": str(e)}, "id": id})
 
     def io_callback(self, fd, event):
-        logger.debug("IO event %r on fd %r" % (event, fd))
-        if event & GLib.IO_HUP:
-            logger.debug("IO_HUP")
-            return True
-        elif event & GLib.IO_IN:
-            chunk = fd.read()
-            for char in chunk:
-                if char == '\n':
-                    logger.info(f'Received: {self._buffer}')
-                    self.control(self._buffer)
-                    self._buffer = ''
-                else:
-                    self._buffer += char
+        try:
+            logger.error(
+                f'IO event "{event}" on fd "{fd}" (type: "{type(fd)}"')
+            if event & GLib.IO_HUP:
+                logger.debug("IO_HUP")
+                return True
+            elif event & GLib.IO_IN:
+                chunk = fd.read()
+                for char in chunk:
+                    if char == '\n':
+                        logger.info(f'Received: {self._buffer}')
+                        self.control(self._buffer)
+                        self._buffer = ''
+                    else:
+                        self._buffer += char
+                return True
+        except Exception as e:
+            logger.error(f'Exception in io_callback: "{str(e)}"')
             return True
 
     def socket_callback(self, fd, event):
         try:
-            logger.debug("Socket event %r on fd %r" % (event, fd))
+            logger.debug(f'Socket event "{event}" on fd "{fd}"')
             if event & GLib.IO_HUP:
                 self.reconnect()
                 return True
@@ -483,8 +490,8 @@ class MPDWrapper(object):
                                 updated = True
                     self.idle_enter()
             return True
-        except:
-            logger.error('Exception in socket_callback')
+        except Exception as e:
+            logger.error(f'Exception in socket_callback: "{str(e)}"')
             self.reconnect()
             return True
 
@@ -794,6 +801,7 @@ Usage: %(progname)s [OPTION]...
      --snapcast-port=PORT   Set the snapcast server port
      --stream=ID            Set the stream id
 
+     -h, --help             Show this help message
      -d, --debug            Run in debug mode
      -v, --version          meta_mpd version
 

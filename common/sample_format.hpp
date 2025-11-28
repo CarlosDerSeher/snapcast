@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2020  Johannes Pohl
+    Copyright (C) 2014-2024  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,9 +16,10 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef SAMPLE_FORMAT_H
-#define SAMPLE_FORMAT_H
+#pragma once
 
+// standard headers
+#include <cstdint>
 #include <string>
 
 
@@ -37,60 +38,73 @@
 class SampleFormat
 {
 public:
+    /// c'tor
     SampleFormat();
+    /// c'tor
     SampleFormat(const std::string& format);
+    /// c'tor
     SampleFormat(uint32_t rate, uint16_t bits, uint16_t channels);
 
+    /// @return sampleformat as string rate:bits::channels
     std::string toString() const;
 
+    /// Set @p format (rate:bits::channels)
     void setFormat(const std::string& format);
+    /// Set format
     void setFormat(uint32_t rate, uint16_t bits, uint16_t channels);
 
+    /// @return if has format
     bool isInitialized() const
     {
         return ((rate_ != 0) || (bits_ != 0) || (channels_ != 0));
     }
 
+    /// @return rate
     uint32_t rate() const
     {
         return rate_;
     }
 
+    /// @return bits
     uint16_t bits() const
     {
         return bits_;
     }
 
+    /// @return channels
     uint16_t channels() const
     {
         return channels_;
     }
 
-    // size in [bytes] of a single mono sample, e.g. 2 bytes (= 16 bits)
+    /// @return size in [bytes] of a single mono sample, e.g. 2 bytes (= 16 bits)
     uint16_t sampleSize() const
     {
         return sample_size_;
     }
 
-    // size in [bytes] of a frame (sum of sample sizes = #channel*sampleSize), e.g. 4 bytes (= 2 channel * 16 bit)
+    /// @return size in [bytes] of a frame (sum of sample sizes = num-channel*sampleSize), e.g. 4 bytes (= 2 channel * 16 bit)
     uint16_t frameSize() const
     {
         return frame_size_;
     }
 
+    /// @return rate per ms (= rate / 1000)
     inline double msRate() const
     {
-        return (double)rate_ / 1000.;
+        return static_cast<double>(rate_) / 1000.;
     }
 
+    /// @return rate per micro seconds (= rate / 1000000)
     inline double usRate() const
     {
-        return (double)rate_ / 1000000.;
+        return static_cast<double>(rate_) / 1000000.;
     }
 
+    /// @return rate per nano seconds (= rate / 1000000000)
     inline double nsRate() const
     {
-        return (double)rate_ / 1000000000.;
+        return static_cast<double>(rate_) / 1000000000.;
     }
 
 private:
@@ -100,6 +114,3 @@ private:
     uint16_t bits_;
     uint16_t channels_;
 };
-
-
-#endif

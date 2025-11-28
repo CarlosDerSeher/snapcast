@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2020  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,12 +16,17 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef TIME_PROVIDER_H
-#define TIME_PROVIDER_H
+#pragma once
 
+
+// local headers
+#include "common/message/message.hpp"
 #include "common/time_defs.hpp"
 #include "double_buffer.hpp"
-#include "message/message.hpp"
+
+// 3rd party headers
+
+// standard headers
 #include <atomic>
 #include <chrono>
 
@@ -35,15 +40,19 @@
 class TimeProvider
 {
 public:
+    /// @return singleton
     static TimeProvider& getInstance()
     {
         static TimeProvider instance;
         return instance;
     }
 
+    /// Set diff to server
     void setDiffToServer(double ms);
+    /// Set diff from round-trip-times client-to-server and server-to-client
     void setDiff(const tv& c2s, const tv& s2c);
 
+    /// @return time diff to server
     template <typename T>
     inline T getDiffToServer() const
     {
@@ -55,22 +64,26 @@ public:
             long getDiffToServerMs();
     */
 
+    /// @return time since epoch
     template <typename T>
     static T sinceEpoche(const chronos::time_point_clk& point)
     {
         return std::chrono::duration_cast<T>(point.time_since_epoch());
     }
 
+    /// @return time_point from @p timeval
     static chronos::time_point_clk toTimePoint(const tv& timeval)
     {
         return chronos::time_point_clk(chronos::usec(timeval.usec) + chronos::sec(timeval.sec));
     }
 
+    /// @return local time
     inline static chronos::time_point_clk now()
     {
         return chronos::clk::now();
     }
 
+    /// @return server time
     inline static chronos::time_point_clk serverNow()
     {
         return chronos::clk::now() + TimeProvider::getInstance().getDiffToServer<chronos::usec>();
@@ -84,6 +97,3 @@ private:
     DoubleBuffer<chronos::usec::rep> diffBuffer_;
     std::atomic<chronos::usec::rep> diffToServer_;
 };
-
-
-#endif

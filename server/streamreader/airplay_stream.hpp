@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,13 +16,14 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef AIRPLAY_STREAM_HPP
-#define AIRPLAY_STREAM_HPP
+#pragma once
+
 
 // local headers
 #include "process_stream.hpp"
 
 // 3rd party headers
+#include <boost/asio/streambuf.hpp>
 // Expat is used in metadata parsing from Shairport-sync.
 // Without HAS_EXPAT defined no parsing will occur.
 #ifdef HAS_EXPAT
@@ -32,24 +33,18 @@
 namespace streamreader
 {
 
-class TageEntry
+/// Tage entry??
+struct TageEntry
 {
-public:
-    TageEntry() : isBase64(false), length(0)
-    {
-    }
-
-    std::string code;
-    std::string type;
-    std::string data;
-    bool isBase64;
-    int length;
+    std::string code;     ///< code
+    std::string type;     ///< type
+    std::string data;     ///< data
+    bool isBase64{false}; ///< is base64?
+    int length{0};        ///< length
 };
 
-/// Starts shairport-sync and reads PCM data from stdout
-
 /**
- * Starts librespot, reads PCM data from stdout, and passes the data to an encoder.
+ * Starts shairport-sync, reads PCM data from stdout, and passes the data to an encoder.
  * Implements EncoderListener to get the encoded data.
  * Data is passed to the PcmStream::Listener
  * usage:
@@ -58,11 +53,13 @@ public:
 class AirplayStream : public ProcessStream
 {
 public:
-    /// ctor. Encoded PCM data is passed to the PipeListener
-    AirplayStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri);
+    /// c'tor. Encoded PCM data is passed to the PipeListener
+    AirplayStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri,
+                  PcmStream::Source source);
+    /// d'tor
     ~AirplayStream() override;
 
-protected:
+private:
 #ifdef HAS_EXPAT
     XML_Parser parser_;
     std::unique_ptr<TageEntry> entry_;
@@ -84,8 +81,8 @@ protected:
 
     void setParamsAndPipePathFromPort();
 
-    void do_connect() override;
-    void do_disconnect() override;
+    void connect() override;
+    void disconnect() override;
     void onStderrMsg(const std::string& line) override;
     void initExeAndPath(const std::string& filename) override;
 
@@ -101,8 +98,9 @@ protected:
     static void XMLCALL element_end(void* userdata, const char* element_name);
     static void XMLCALL data(void* userdata, const char* content, int length);
 #endif
+
+private:
+    AixLog::Severity read_logseverity_{AixLog::Severity::info};
 };
 
 } // namespace streamreader
-
-#endif

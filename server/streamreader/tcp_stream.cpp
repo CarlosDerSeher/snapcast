@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,13 +23,11 @@
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
-#include "common/utils/string_utils.hpp"
-#include "encoder/encoder_factory.hpp"
 
 // 3rd party headers
 
 // standard headers
-#include <cerrno>
+#include <cstdint>
 #include <memory>
 
 
@@ -40,17 +38,13 @@ namespace streamreader
 
 static constexpr auto LOG_TAG = "TcpStream";
 
-TcpStream::TcpStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri)
-    : AsioStream<tcp::socket>(pcmListener, ioc, server_settings, uri), reconnect_timer_(ioc)
+TcpStream::TcpStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri,
+                     PcmStream::Source source)
+    : AsioStream<tcp::socket>(pcmListener, ioc, server_settings, uri, source), reconnect_timer_(ioc)
 {
+    static constexpr uint16_t DEFAULT_PORT = 4953;
     host_ = uri_.host;
-    auto host_port = utils::string::split(host_, ':');
-    port_ = 4953;
-    if (host_port.size() == 2)
-    {
-        host_ = host_port[0];
-        port_ = cpt::stoi(host_port[1], port_);
-    }
+    port_ = uri_.port.value_or(DEFAULT_PORT);
 
     auto mode = uri_.getQuery("mode", "server");
     if (mode == "server")
@@ -64,22 +58,23 @@ TcpStream::TcpStream(PcmStream::Listener* pcmListener, boost::asio::io_context& 
 
     LOG(INFO, LOG_TAG) << "TcpStream host: " << host_ << ", port: " << port_ << ", is server: " << is_server_ << "\n";
     if (is_server_)
-        acceptor_ = make_unique<tcp::acceptor>(strand_, tcp::endpoint(boost::asio::ip::address::from_string(host_), port_));
+        acceptor_ = make_unique<tcp::acceptor>(strand_, tcp::endpoint(boost::asio::ip::make_address(host_), port_));
 }
 
 
-void TcpStream::do_connect()
+void TcpStream::connect()
 {
     if (!active_)
         return;
 
     if (is_server_)
     {
-        acceptor_->async_accept([this](boost::system::error_code ec, tcp::socket socket) {
+        acceptor_->async_accept([this, self = shared_from_this()](boost::system::error_code ec, tcp::socket socket)
+        {
             if (!ec)
             {
                 LOG(DEBUG, LOG_TAG) << "New client connection\n";
-                stream_ = make_unique<tcp::socket>(move(socket));
+                stream_ = make_unique<tcp::socket>(std::move(socket));
                 on_connect();
             }
             else
@@ -91,8 +86,9 @@ void TcpStream::do_connect()
     else
     {
         stream_ = make_unique<tcp::socket>(strand_);
-        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address::from_string(host_), port_);
-        stream_->async_connect(endpoint, [this](const boost::system::error_code& ec) {
+        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::make_address(host_), port_);
+        stream_->async_connect(endpoint, [this, self = shared_from_this()](const boost::system::error_code& ec)
+        {
             if (!ec)
             {
                 LOG(DEBUG, LOG_TAG) << "Connected\n";
@@ -101,19 +97,20 @@ void TcpStream::do_connect()
             else
             {
                 LOG(DEBUG, LOG_TAG) << "Connect failed: " << ec.message() << "\n";
-                wait(reconnect_timer_, 1s, [this] { connect(); });
+                wait(reconnect_timer_, 1s, [this, self = shared_from_this()] { connect(); });
             }
         });
     }
 }
 
 
-void TcpStream::do_disconnect()
+void TcpStream::disconnect()
 {
-    if (stream_)
-        stream_->close();
+    reconnect_timer_.cancel();
     if (acceptor_)
         acceptor_->cancel();
-    reconnect_timer_.cancel();
+    AsioStream<tcp::socket>::disconnect();
 }
+
+
 } // namespace streamreader

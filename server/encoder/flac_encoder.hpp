@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2020  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,37 +16,46 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef FLAC_ENCODER_HPP
-#define FLAC_ENCODER_HPP
-#include "encoder.hpp"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#pragma once
 
-#include "FLAC/metadata.h"
+// local headers
+#include "encoder.hpp"
+
+// 3rd party headers
 #include "FLAC/stream_encoder.h"
+
+// standard headers
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 namespace encoder
 {
 
+/// Flac encoder
 class FlacEncoder : public Encoder
 {
 public:
-    FlacEncoder(const std::string& codecOptions = "");
+    /// c'tor
+    explicit FlacEncoder(std::string codecOptions);
+    /// d'tor
     ~FlacEncoder() override;
+
     void encode(const msg::PcmChunk& chunk) override;
     std::string getAvailableOptions() const override;
     std::string getDefaultOptions() const override;
     std::string name() const override;
 
+    /// FLAC write callback
     FLAC__StreamEncoderWriteStatus write_callback(const FLAC__StreamEncoder* encoder, const FLAC__byte buffer[], size_t bytes, unsigned samples,
                                                   unsigned current_frame);
 
-protected:
+private:
     void initEncoder() override;
 
     FLAC__StreamEncoder* encoder_;
-    FLAC__StreamMetadata* metadata_[2];
+    std::array<FLAC__StreamMetadata*, 2> metadata_;
 
     FLAC__int32* pcmBuffer_;
     int pcmBufferSize_;
@@ -56,5 +65,3 @@ protected:
 };
 
 } // namespace encoder
-
-#endif

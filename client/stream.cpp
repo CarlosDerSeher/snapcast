@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2024  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,12 +20,18 @@
 #define NOMINMAX
 #endif // NOMINMAX
 
+// prototype/interface header file
 #include "stream.hpp"
+
+// local headers
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
-#include "common/utils/logging.hpp"
 #include "time_provider.hpp"
+
+// 3rd party headers
+
+// standard headers
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -41,7 +47,7 @@ static constexpr auto kCorrectionBegin = 100us;
 
 Stream::Stream(const SampleFormat& in_format, const SampleFormat& out_format)
     : in_format_(in_format), median_(0), shortMedian_(0), lastUpdate_(0), playedFrames_(0), correctAfterXFrames_(0), bufferMs_(cs::msec(500)), frame_delta_(0),
-      hard_sync_(true)
+      hard_sync_(true), time_cond_(1s)
 {
     buffer_.setSize(500);
     shortBuffer_.setSize(100);
@@ -90,8 +96,12 @@ void Stream::setBufferLen(size_t bufferLenMs)
 void Stream::clearChunks()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    while (!chunks_.empty())
-        chunks_.pop();
+    // Use the safer try_pop pattern to drain the queue
+    std::shared_ptr<msg::PcmChunk> chunk;
+    while (chunks_.try_pop(chunk))
+    {
+        // Keep popping until the queue is empty
+    }
     resetBuffers();
 }
 
@@ -155,7 +165,7 @@ cs::time_point_clk Stream::getNextPlayerChunk(void* outputBuffer, uint32_t frame
 
 cs::time_point_clk Stream::getNextPlayerChunk(void* outputBuffer, uint32_t frames, int32_t framesCorrection)
 {
-    if (framesCorrection < 0 && frames + framesCorrection <= 0)
+    if (framesCorrection < 0 && (static_cast<int32_t>(frames) + framesCorrection <= 0))
     {
         // Avoid underflow in new char[] constructor.
         framesCorrection = -static_cast<int32_t>(frames) + 1;
@@ -402,7 +412,7 @@ bool Stream::getPlayerChunk(void* outputBuffer, const cs::usec& outputBufferDacT
             auto miniMedian = miniBuffer_.median();
             if ((cs::usec(shortMedian_) > kCorrectionBegin) && (cs::usec(miniMedian) > cs::usec(50)) && (cs::usec(age) > cs::usec(50)))
             {
-                double rate = (shortMedian_ / 100) * 0.00005;
+                double rate = (shortMedian_ / 100.) * 0.00005;
                 rate = 1.0 - std::min(rate, 0.0005);
                 // LOG(INFO, LOG_TAG) << "Rate: " << rate << "\n";
                 // we are late (age > 0), this means we are not playing fast enough
@@ -411,7 +421,7 @@ bool Stream::getPlayerChunk(void* outputBuffer, const cs::usec& outputBufferDacT
             }
             else if ((cs::usec(shortMedian_) < -kCorrectionBegin) && (cs::usec(miniMedian) < -cs::usec(50)) && (cs::usec(age) < -cs::usec(50)))
             {
-                double rate = (-shortMedian_ / 100) * 0.00005;
+                double rate = (-shortMedian_ / 100.) * 0.00005;
                 rate = 1.0 + std::min(rate, 0.0005);
                 // LOG(INFO, LOG_TAG) << "Rate: " << rate << "\n";
                 // we are early (age > 0), this means we are playing too fast
@@ -459,8 +469,7 @@ bool Stream::getPlayerChunkOrSilence(void* outputBuffer, const chronos::usec& ou
     bool result = getPlayerChunk(outputBuffer, outputBufferDacTime, frames);
     if (!result)
     {
-        static utils::logging::TimeConditional cond(1s);
-        LOG(DEBUG, LOG_TAG) << cond << "Failed to get chunk, returning silence\n";
+        LOG(DEBUG, LOG_TAG) << time_cond_ << "Failed to get chunk, returning silence\n";
         getSilentPlayerChunk(outputBuffer, frames);
     }
     return result;

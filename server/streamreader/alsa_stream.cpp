@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,6 +23,9 @@
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
+
+// 3rd party headers
+#include <boost/asio/post.hpp>
 
 // standard headers
 #include <cerrno>
@@ -51,7 +54,8 @@ template <typename Rep, typename Period>
 void wait(boost::asio::steady_timer& timer, const std::chrono::duration<Rep, Period>& duration, std::function<void()> handler)
 {
     timer.expires_after(duration);
-    timer.async_wait([handler = std::move(handler)](const boost::system::error_code& ec) {
+    timer.async_wait([handler = std::move(handler)](const boost::system::error_code& ec)
+    {
         if (ec)
         {
             LOG(ERROR, LOG_TAG) << "Error during async wait: " << ec.message() << "\n";
@@ -65,24 +69,13 @@ void wait(boost::asio::steady_timer& timer, const std::chrono::duration<Rep, Per
 } // namespace
 
 
-AlsaStream::AlsaStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri)
-    : PcmStream(pcmListener, ioc, server_settings, uri), handle_(nullptr), read_timer_(strand_), silence_(0ms)
+AlsaStream::AlsaStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri,
+                       PcmStream::Source source)
+    : PcmStream(pcmListener, ioc, server_settings, uri, source), handle_(nullptr), read_timer_(strand_), silence_(0ms)
 {
     device_ = uri_.getQuery("device", "hw:0");
     send_silence_ = (uri_.getQuery("send_silence", "false") == "true");
     idle_threshold_ = std::chrono::milliseconds(std::max(cpt::stoi(uri_.getQuery("idle_threshold", "100")), 10));
-    double silence_threshold_percent = 0.;
-    try
-    {
-        silence_threshold_percent = cpt::stod(uri_.getQuery("silence_threshold_percent", "0"));
-    }
-    catch (...)
-    {
-    }
-    int32_t max_amplitude = std::pow(2, sampleFormat_.bits() - 1) - 1;
-    silence_threshold_ = max_amplitude * (silence_threshold_percent / 100.);
-    LOG(DEBUG, LOG_TAG) << "Device: " << device_ << ", silence threshold percent: " << silence_threshold_percent
-                        << ", silence threshold amplitude: " << silence_threshold_ << "\n";
 }
 
 
@@ -90,19 +83,12 @@ void AlsaStream::start()
 {
     LOG(DEBUG, LOG_TAG) << "Start, sampleformat: " << sampleFormat_.toString() << "\n";
 
-    // idle_bytes_ = 0;
-    // max_idle_bytes_ = sampleFormat_.rate() * sampleFormat_.frameSize() * dryout_ms_ / 1000;
-
     initAlsa();
-    chunk_ = std::make_unique<msg::PcmChunk>(sampleFormat_, chunk_ms_);
-    silent_chunk_ = std::vector<char>(chunk_->payloadSize, 0);
-    LOG(DEBUG, LOG_TAG) << "Chunk duration: " << chunk_->durationMs() << " ms, frames: " << chunk_->getFrameCount() << ", size: " << chunk_->payloadSize
-                        << "\n";
     first_ = true;
     tvEncodedChunk_ = std::chrono::steady_clock::now();
     PcmStream::start();
     // wait(read_timer_, std::chrono::milliseconds(chunk_ms_), [this] { do_read(); });
-    do_read();
+    boost::asio::post(strand_, [this] { do_read(); });
 }
 
 
@@ -160,10 +146,33 @@ void AlsaStream::initAlsa()
     if ((err = snd_pcm_hw_params(handle_, hw_params)) < 0)
         throw SnapException("Can't set hardware parameters: " + string(snd_strerror(err)));
 
+#if 0 // Period size test code
+    // snd_pcm_uframes_t period_size;
+    // if ((err = snd_pcm_hw_params_get_period_size(hw_params, &period_size, nullptr)) < 0)
+    //     LOG(ERROR, LOG_TAG) << "Can't get min period size: " << snd_strerror(err) << "\n";
+    // else
+    //     LOG(INFO, LOG_TAG) << "Period size: " << period_size << ", " << double(period_size) / double(sampleFormat_.rate()) * 1000. << " ms\n";
+
+    // period_size = sampleFormat_.msRate() * chunk_ms_;
+    // if ((err = snd_pcm_hw_params_set_period_size_near(handle_, hw_params, &period_size, 0)) < 0)
+    //     LOG(ERROR, LOG_TAG) << "Can't set period size: " << snd_strerror(err) << "\n";
+    // else
+    //     LOG(INFO, LOG_TAG) << "Period size: " << period_size << ", " << double(period_size) / double(sampleFormat_.rate()) * 1000. << " ms\n";
+
+    // chunk_ = std::make_unique<msg::PcmChunk>(sampleFormat_, 2*period_size, false);
+    // LOG(INFO, LOG_TAG) << "Chunk duration: " << chunk_->duration<std::chrono::milliseconds>().count() << "\n";
+#endif
+
     snd_pcm_hw_params_free(hw_params);
 
     if ((err = snd_pcm_prepare(handle_)) < 0)
         throw SnapException("Can't prepare audio interface for use: " + string(snd_strerror(err)));
+
+    if (snd_pcm_state(handle_) == SND_PCM_STATE_PREPARED)
+    {
+        if ((err = snd_pcm_start(handle_)) < 0)
+            throw SnapException("Failed to start PCM: " + string(snd_strerror(err)));
+    }
 }
 
 
@@ -177,41 +186,6 @@ void AlsaStream::uninitAlsa()
 }
 
 
-bool AlsaStream::isSilent(const msg::PcmChunk& chunk) const
-{
-    if (silence_threshold_ == 0)
-        return (std::memcmp(chunk.payload, silent_chunk_.data(), silent_chunk_.size()) == 0);
-
-    if (sampleFormat_.sampleSize() == 1)
-    {
-        auto payload = chunk.getPayload<int8_t>();
-        for (size_t n = 0; n < payload.second; ++n)
-        {
-            if (abs(payload.first[n]) > silence_threshold_)
-                return false;
-        }
-    }
-    else if (sampleFormat_.sampleSize() == 2)
-    {
-        auto payload = chunk.getPayload<int16_t>();
-        for (size_t n = 0; n < payload.second; ++n)
-        {
-            if (abs(payload.first[n]) > silence_threshold_)
-                return false;
-        }
-    }
-    else if (sampleFormat_.sampleSize() == 4)
-    {
-        auto payload = chunk.getPayload<int32_t>();
-        for (size_t n = 0; n < payload.second; ++n)
-        {
-            if (abs(payload.first[n]) > silence_threshold_)
-                return false;
-        }
-    }
-    return true;
-}
-
 void AlsaStream::do_read()
 {
     try
@@ -222,18 +196,70 @@ void AlsaStream::do_read()
             nextTick_ = std::chrono::steady_clock::now();
         }
 
+        auto avail = snd_pcm_avail(handle_);
+        if (avail >= 0)
+        {
+#if 0 // Some debug code
+            static long max_avail = 0;
+            if (avail > max_avail)
+            {
+                max_avail = avail;
+                LOG(INFO, LOG_TAG) << "Max Available: " << avail << ", " << double(avail) / double(sampleFormat_.rate()) * 1000. << " ms\n";
+            }
+            static utils::logging::TimeConditional cond(1s);
+            LOG(INFO, LOG_TAG) << cond << "Available: " << avail << ", " << double(avail) / double(sampleFormat_.rate()) * 1000. << " ms, max: " << double(max_avail) / double(sampleFormat_.rate()) * 1000. << " ms\n";
+#endif
+
+            // check if enough data is available to read from alsa
+            if ((static_cast<int32_t>(chunk_->getFrameCount()) > avail))
+            {
+                // Calculate when there will be enough data available, add half chunk duration tolerance and try later
+                auto available = std::chrono::milliseconds(static_cast<size_t>(double(avail) / double(sampleFormat_.rate()) * 1000.));
+                auto missing = chunk_->duration<std::chrono::milliseconds>() - available;
+                LOG(INFO, LOG_TAG) << "Not enough data available: " << available.count() << " ms, missing: " << missing.count()
+                                   << " ms, needed: " << chunk_->duration<std::chrono::milliseconds>().count() << " ms\n";
+                missing += chunk_->duration<std::chrono::milliseconds>() / 2;
+                resync(missing);
+                first_ = true;
+                wait(read_timer_, missing, [this] { do_read(); });
+                return;
+            }
+            // check if there is too much data available, i.e. if we are far behind
+            else if (avail > static_cast<int32_t>(3 * chunk_->getFrameCount()))
+            {
+                // Fast forward, by reading and dropping audio frames
+                // const auto newAvail = static_cast<int32_t>(chunk_->getFrameCount() + static_cast<uint32_t>(chunk_->format.msRate() * 20));
+                const auto newAvail = 1.5 * chunk_->getFrameCount();
+                LOG(INFO, LOG_TAG) << "Too many frames available, fast forwarding from " << avail << " frames ("
+                                   << double(avail) / double(sampleFormat_.rate()) * 1000. << " ms) to " << newAvail << " frames ("
+                                   << double(newAvail) / double(sampleFormat_.rate()) * 1000. << " ms)\n";
+                do
+                {
+                    int count = snd_pcm_readi(handle_, chunk_->payload, std::min(chunk_->getFrameCount(), static_cast<uint32_t>(avail - newAvail)));
+                    if (count <= 0)
+                    {
+                        // some read error happened, just break here, this will be handled properly later in the read loop
+                        break;
+                    }
+                    avail -= count;
+                    LOG(DEBUG, LOG_TAG) << "Read " << count << " frames (" << double(count) / double(sampleFormat_.rate()) * 1000.
+                                        << " ms), available: " << avail << " frames (" << double(avail) / double(sampleFormat_.rate()) * 1000. << " ms)\n";
+                } while (avail > newAvail);
+                first_ = true;
+            }
+        }
+
         int toRead = chunk_->payloadSize;
         auto duration = chunk_->duration<std::chrono::nanoseconds>();
         int len = 0;
         do
         {
-            int count = snd_pcm_readi(handle_, chunk_->payload + len, (toRead - len) / chunk_->format.frameSize());
+            snd_pcm_sframes_t count = snd_pcm_readi(handle_, chunk_->payload + len, (toRead - len) / chunk_->format.frameSize());
             if (count == -EAGAIN)
             {
                 LOG(INFO, LOG_TAG) << "No data availabale, playing silence.\n";
                 // no data available, fill with silence
                 memset(chunk_->payload + len, 0, toRead - len);
-                // idle_bytes_ += toRead - len;
                 break;
             }
             else if (count == 0)
@@ -292,21 +318,21 @@ void AlsaStream::do_read()
         {
             // LOG(DEBUG, LOG_TAG) << "Next read: " << std::chrono::duration_cast<std::chrono::milliseconds>(next_read).count() << "\n";
             // synchronize reads to an interval of chunk_ms_
-            wait(read_timer_, nextTick_ - currentTick, [this] { do_read(); });
+            wait(read_timer_, next_read, [this] { do_read(); });
             return;
         }
         else if (next_read >= -kResyncTolerance)
         {
             LOG(INFO, LOG_TAG) << "next read < 0 (" << getName() << "): " << std::chrono::duration_cast<std::chrono::microseconds>(next_read).count() / 1000.
                                << " ms\n ";
-            do_read();
+            boost::asio::post(strand_, [this] { do_read(); });
         }
         else
         {
             // reading chunk_ms_ took longer than chunk_ms_
             resync(-next_read);
             first_ = true;
-            wait(read_timer_, nextTick_ - currentTick, [this] { do_read(); });
+            boost::asio::post(strand_, [this] { do_read(); });
         }
 
         lastException_ = "";
@@ -315,7 +341,7 @@ void AlsaStream::do_read()
     {
         if (lastException_ != e.what())
         {
-            LOG(ERROR, LOG_TAG) << "Exception: " << e.what() << std::endl;
+            LOG(ERROR, LOG_TAG) << "Exception: " << e.what() << "\n";
             lastException_ = e.what();
         }
         first_ = true;

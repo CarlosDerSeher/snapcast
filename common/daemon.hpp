@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2020  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,18 +16,22 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef DAEMON_H
-#define DAEMON_H
+#pragma once
 
+
+// standard headers
 #include <string>
 
-
+/// Daemonize a process: run a fork as specified user/group
 class Daemon
 {
 public:
-    Daemon(const std::string& user, const std::string& group, const std::string& pidfile);
+    /// c'tor
+    Daemon(std::string user, std::string group, std::string pidfile);
+    /// d'tor
     virtual ~Daemon();
 
+    /// daemonize the process
     void daemonize();
 
 private:
@@ -36,6 +40,3 @@ private:
     std::string group_;
     std::string pidfile_;
 };
-
-
-#endif // DAEMON_H

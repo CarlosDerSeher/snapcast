@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,9 +16,14 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "pcm_encoder.hpp"
+
+// local headers
 #include "common/aixlog.hpp"
 #include "common/endian.hpp"
+
+// standard headers
 #include <memory>
 
 
@@ -37,15 +42,15 @@ namespace
 template <typename T>
 void assign(void* pointer, T val)
 {
-    T* p = (T*)pointer;
+    T* p = static_cast<T*>(pointer);
     *p = val;
 }
 } // namespace
 
 
-PcmEncoder::PcmEncoder(const std::string& codecOptions) : Encoder(codecOptions)
+PcmEncoder::PcmEncoder(std::string codecOptions) : Encoder(std::move(codecOptions))
 {
-    headerChunk_.reset(new msg::CodecHeader("pcm"));
+    headerChunk_ = std::make_shared<msg::CodecHeader>("pcm");
 }
 
 

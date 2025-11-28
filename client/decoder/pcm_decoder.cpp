@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,10 +16,13 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "pcm_decoder.hpp"
-#include "common/aixlog.hpp"
+
+// local headers
 #include "common/endian.hpp"
 #include "common/snap_exception.hpp"
+
 
 namespace decoder
 {
@@ -29,29 +32,35 @@ static constexpr auto ID_WAVE = 0x45564157;
 static constexpr auto ID_FMT = 0x20746d66;
 static constexpr auto ID_DATA = 0x61746164;
 
+/// RIFF wave header
+/// See https://en.wikipedia.org/wiki/WAV
 struct riff_wave_header
 {
-    uint32_t riff_id;
-    uint32_t riff_sz;
-    uint32_t wave_id;
+    uint32_t riff_id; ///< "RIFF"
+    uint32_t riff_sz; ///< file size - 8
+    uint32_t wave_id; ///< "WAVE"
 };
 
 
+/// Chunk header
+/// See https://en.wikipedia.org/wiki/WAV
 struct chunk_header
 {
-    uint32_t id;
-    uint32_t sz;
+    uint32_t id; ///< id
+    uint32_t sz; ///< size
 };
 
 
+/// Chunk format
+/// See https://en.wikipedia.org/wiki/WAV
 struct chunk_fmt
 {
-    uint16_t audio_format;
-    uint16_t num_channels;
-    uint32_t sample_rate;
-    uint32_t byte_rate;
-    uint16_t block_align;
-    uint16_t bits_per_sample;
+    uint16_t audio_format;    ///< format
+    uint16_t num_channels;    ///< channels
+    uint32_t sample_rate;     ///< sample rate
+    uint32_t byte_rate;       ///< byte rate
+    uint16_t block_align;     ///< block align
+    uint16_t bits_per_sample; ///< bps
 };
 
 

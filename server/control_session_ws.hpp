@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,17 +16,31 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef CONTROL_SESSION_WS_HPP
-#define CONTROL_SESSION_WS_HPP
+#pragma once
 
+
+// local headers
 #include "control_session.hpp"
+
+// 3rd party headers
+#include <boost/asio/strand.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
+#ifdef HAS_OPENSSL
+#include <boost/beast/ssl.hpp>
+#endif
+
+// standard headers
 #include <deque>
+#include <optional>
+
 
 namespace beast = boost::beast;         // from <boost/beast.hpp>
 namespace websocket = beast::websocket; // from <boost/beast/websocket.hpp>
-namespace net = boost::asio;            // from <boost/asio.hpp>
+using tcp_socket = boost::asio::ip::tcp::socket;
+using ssl_socket = boost::asio::ssl::stream<tcp_socket>;
+using tcp_websocket = websocket::stream<tcp_socket>;
+using ssl_websocket = websocket::stream<ssl_socket>;
 
 
 /// Endpoint for a connected control client.
@@ -38,8 +52,12 @@ namespace net = boost::asio;            // from <boost/asio.hpp>
 class ControlSessionWebsocket : public ControlSession
 {
 public:
-    /// ctor. Received message from the client are passed to ControlMessageReceiver
-    ControlSessionWebsocket(ControlMessageReceiver* receiver, websocket::stream<beast::tcp_stream>&& socket);
+#ifdef HAS_OPENSSL
+    /// c'tor for ssl websockets. Received message from the client are passed to ControlMessageReceiver
+    ControlSessionWebsocket(ControlMessageReceiver* receiver, ssl_websocket&& ssl_ws, const ServerSettings& settings);
+#endif
+    /// c'tor for TCP websockets. Received message from the client are passed to ControlMessageReceiver
+    ControlSessionWebsocket(ControlMessageReceiver* receiver, tcp_websocket&& tcp_ws, const ServerSettings& settings);
     ~ControlSessionWebsocket() override;
     void start() override;
     void stop() override;
@@ -47,20 +65,19 @@ public:
     /// Sends a message to the client (asynchronous)
     void sendAsync(const std::string& message) override;
 
-protected:
+private:
     // Websocket methods
     void on_read_ws(beast::error_code ec, std::size_t bytes_transferred);
     void do_read_ws();
     void send_next();
 
-    websocket::stream<beast::tcp_stream> ws_;
-
-protected:
-    beast::flat_buffer buffer_;
-    net::strand<net::any_io_executor> strand_;
-    std::deque<std::string> messages_;
-};
-
-
-
+    std::optional<tcp_websocket> tcp_ws_;
+#ifdef HAS_OPENSSL
+    std::optional<ssl_websocket> ssl_ws_;
 #endif
+
+    beast::flat_buffer buffer_;
+    boost::asio::strand<boost::asio::any_io_executor> strand_;
+    std::deque<std::string> messages_;
+    bool is_ssl_;
+};

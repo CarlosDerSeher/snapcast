@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,17 +16,19 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "daemon.hpp"
 
+// local headers
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
-#include "common/utils.hpp"
 #include "common/utils/file_utils.hpp"
+
+// standard headers
+#include <array>
 #include <cstdlib>
-#include <cstring>
 #include <fcntl.h>
 #include <grp.h>
-#include <iostream>
 #include <pwd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -34,11 +36,11 @@
 #include <unistd.h>
 
 
-Daemon::Daemon(const std::string& user, const std::string& group, const std::string& pidfile)
-    : pidFilehandle_(-1), user_(user), group_(group), pidfile_(pidfile)
+Daemon::Daemon(std::string user, std::string group, std::string pidfile)
+    : pidFilehandle_(-1), user_(std::move(user)), group_(std::move(group)), pidfile_(std::move(pidfile))
 {
-    if (pidfile.empty() || pidfile.find('/') == std::string::npos)
-        throw SnapException("invalid pid file \"" + pidfile + "\"");
+    if (pidfile_.empty() || pidfile_.find('/') == std::string::npos)
+        throw SnapException("invalid pid file \"" + pidfile_ + "\"");
 }
 
 
@@ -64,7 +66,7 @@ void Daemon::daemonize()
 
     auto user_uid = static_cast<uid_t>(-1);
     auto user_gid = static_cast<gid_t>(-1);
-    std::string user_name;
+    // std::string user_name;
     // #ifdef FREEBSD
     //     bool had_group = false;
     // #endif
@@ -76,14 +78,14 @@ void Daemon::daemonize()
             throw SnapException("no such user \"" + user_ + "\"");
         user_uid = pwd->pw_uid;
         user_gid = pwd->pw_gid;
-        user_name = strdup(user_.c_str());
+        // user_name = strdup(user_.c_str());
         /// this is needed by libs such as arts
         setenv("HOME", pwd->pw_dir, 1);
     }
 
     if (!group_.empty())
     {
-        struct group* grp = getgrnam(group_.c_str());
+        const struct group* grp = getgrnam(group_.c_str());
         if (grp == nullptr)
             throw SnapException("no such group \"" + group_ + "\"");
         user_gid = grp->gr_gid;
@@ -102,14 +104,14 @@ void Daemon::daemonize()
     if (user_gid != static_cast<gid_t>(-1) && user_gid != getgid() && setgid(user_gid) == -1)
         throw SnapException("Failed to set group " + cpt::to_string(static_cast<int>(user_gid)));
 
-    //#if defined(FREEBSD) && !defined(MACOS)
-    //#ifdef FREEBSD
+    // #if defined(FREEBSD) && !defined(MACOS)
+    // #ifdef FREEBSD
     /// init supplementary groups
     /// (must be done before we change our uid)
     /// no need to set the new user's supplementary groups if we are already this user
     //	if (!had_group && user_uid != getuid() && initgroups(user_name, user_gid) == -1)
     //		throw SnapException("Failed to set supplementary groups of user \"" + user + "\"");
-    //#endif
+    // #endif
     /// set uid
     if (user_uid != static_cast<uid_t>(-1) && user_uid != getuid() && setuid(user_uid) == -1)
         throw SnapException("Failed to set user " + user_);
@@ -150,12 +152,12 @@ void Daemon::daemonize()
     if (lockf(pidFilehandle_, F_TLOCK, 0) == -1)
         throw SnapException("Could not lock PID lock file \"" + pidfile_ + "\". Is the daemon already running?");
 
-    char str[10];
+    std::array<char, 10> str;
     /// Get and format PID
-    sprintf(str, "%d\n", getpid());
+    sprintf(str.data(), "%d\n", getpid());
 
     /// write pid to lockfile
-    if (write(pidFilehandle_, str, strlen(str)) != static_cast<int>(strlen(str)))
+    if (write(pidFilehandle_, str.data(), str.size()) != static_cast<int>(str.size()))
         throw SnapException("Could not write PID to lock file \"" + pidfile_ + "\"");
 
     /// Close out the standard file descriptors

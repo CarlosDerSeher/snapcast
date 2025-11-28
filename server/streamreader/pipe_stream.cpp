@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -27,6 +27,7 @@
 // standard headers
 #include <cerrno>
 #include <memory>
+#include <system_error>
 
 
 using namespace std;
@@ -37,8 +38,9 @@ namespace streamreader
 static constexpr auto LOG_TAG = "PipeStream";
 
 
-PipeStream::PipeStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri)
-    : PosixStream(pcmListener, ioc, server_settings, uri)
+PipeStream::PipeStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri,
+                       PcmStream::Source source)
+    : AsioStream<stream_descriptor>(pcmListener, ioc, server_settings, uri, source)
 {
     umask(0);
     string mode = uri_.getQuery("mode", "create");
@@ -55,9 +57,21 @@ PipeStream::PipeStream(PcmStream::Listener* pcmListener, boost::asio::io_context
 }
 
 
-void PipeStream::do_connect()
+void PipeStream::connect()
 {
     int fd = open(uri_.path.c_str(), O_RDONLY | O_NONBLOCK);
+    if (fd < 0)
+    {
+        std::string error = "failed to open fifo \"" + uri_.path + "\": " + cpt::to_string(errno);
+        if (errno == static_cast<int>(std::errc::no_such_file_or_directory))
+        {
+            LOG(ERROR, LOG_TAG) << error << "\n";
+            wait(read_timer_, 200ms, [this, self = shared_from_this()] { connect(); });
+            return;
+        }
+        throw SnapException(error);
+    }
+
     int pipe_size = -1;
 #if !defined(MACOS) && !defined(FREEBSD)
     pipe_size = fcntl(fd, F_GETPIPE_SZ);

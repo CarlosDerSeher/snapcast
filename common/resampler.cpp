@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,11 +16,18 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "resampler.hpp"
-#include "common/aixlog.hpp"
-#include "common/snap_exception.hpp"
 
+// local headers
+#include "common/aixlog.hpp"
+#ifndef HAS_SOXR
+#include "common/snap_exception.hpp"
+#endif
+
+// standard headers
 #include <cmath>
+
 
 using namespace std;
 
@@ -29,7 +36,6 @@ static constexpr auto LOG_TAG = "Resampler";
 Resampler::Resampler(const SampleFormat& in_format, const SampleFormat& out_format) : in_format_(in_format), out_format_(out_format)
 {
 #ifdef HAS_SOXR
-    soxr_ = nullptr;
     if ((out_format_.rate() != in_format_.rate()) || (out_format_.bits() != in_format_.bits()))
     {
         LOG(INFO, LOG_TAG) << "Resampling from " << in_format_.toString() << " to " << out_format_.toString() << "\n";
@@ -191,7 +197,7 @@ std::shared_ptr<msg::PcmChunk> Resampler::resample(const msg::PcmChunk& chunk)
 }
 
 
-shared_ptr<msg::PcmChunk> Resampler::resample(shared_ptr<msg::PcmChunk> chunk)
+std::shared_ptr<msg::PcmChunk> Resampler::resample(std::shared_ptr<msg::PcmChunk> chunk)
 {
 #ifndef HAS_SOXR
     return chunk;

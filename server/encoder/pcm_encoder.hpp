@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2020  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,24 +16,27 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef PCM_ENCODER_HPP
-#define PCM_ENCODER_HPP
+#pragma once
+
+// local headers
 #include "encoder.hpp"
+
 
 namespace encoder
 {
 
+/// PCM encoder
 class PcmEncoder : public Encoder
 {
 public:
-    PcmEncoder(const std::string& codecOptions = "");
+    /// c'tor
+    explicit PcmEncoder(std::string codecOptions);
+
     void encode(const msg::PcmChunk& chunk) override;
     std::string name() const override;
 
-protected:
+private:
     void initEncoder() override;
 };
 
 } // namespace encoder
-
-#endif

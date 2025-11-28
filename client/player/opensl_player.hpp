@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2020  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,21 +16,28 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef OPEN_SL_PLAYER_HPP
-#define OPEN_SL_PLAYER_HPP
+#pragma once
 
+
+// local headers
+#include "player.hpp"
+
+// 3rd party headers
 #include <SLES/OpenSLES.h>
 #include <SLES/OpenSLES_Android.h>
+
+// standard headers
 #include <string>
 
-#include "player.hpp"
 
 namespace player
 {
 
 static constexpr auto OPENSL = "opensl";
 
-typedef int (*AndroidAudioCallback)(short* buffer, int num_samples);
+
+// typedef int (*AndroidAudioCallback)(short* buffer, int num_samples);
+using AndroidAudioCallback = int (*)(short*, int);
 
 
 /// OpenSL Audio Player
@@ -40,15 +47,18 @@ typedef int (*AndroidAudioCallback)(short* buffer, int num_samples);
 class OpenslPlayer : public Player
 {
 public:
+    /// c'tor
     OpenslPlayer(boost::asio::io_context& io_context, const ClientSettings::Player& settings, std::shared_ptr<Stream> stream);
-    virtual ~OpenslPlayer();
+    /// d'tor
+    ~OpenslPlayer() override;
 
     void start() override;
     void stop() override;
 
+    /// Callback to feed data to the player API
     void playerCallback(SLAndroidSimpleBufferQueueItf bq);
 
-protected:
+private:
     void initOpensl();
     void uninitOpensl();
 
@@ -78,5 +88,3 @@ protected:
 };
 
 } // namespace player
-
-#endif

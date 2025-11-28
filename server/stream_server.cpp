@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,9 +22,6 @@
 // local headers
 #include "common/aixlog.hpp"
 #include "config.hpp"
-#include "message/client_info.hpp"
-#include "message/hello.hpp"
-#include "message/time.hpp"
 #include "stream_session_tcp.hpp"
 
 // 3rd party headers
@@ -39,8 +36,8 @@ using json = nlohmann::json;
 
 static constexpr auto LOG_TAG = "StreamServer";
 
-StreamServer::StreamServer(net::io_context& io_context, const ServerSettings& serverSettings, StreamMessageReceiver* messageReceiver)
-    : io_context_(io_context), config_timer_(io_context), settings_(serverSettings), messageReceiver_(messageReceiver)
+StreamServer::StreamServer(boost::asio::io_context& io_context, ServerSettings serverSettings, StreamMessageReceiver* messageReceiver)
+    : io_context_(io_context), config_timer_(io_context), settings_(std::move(serverSettings)), messageReceiver_(messageReceiver)
 {
 }
 
@@ -50,7 +47,7 @@ StreamServer::~StreamServer() = default;
 
 void StreamServer::cleanup()
 {
-    auto new_end = std::remove_if(sessions_.begin(), sessions_.end(), [](std::weak_ptr<StreamSession> session) { return session.expired(); });
+    auto new_end = std::remove_if(sessions_.begin(), sessions_.end(), [](const std::weak_ptr<StreamSession>& session) { return session.expired(); });
     auto count = distance(new_end, sessions_.end());
     if (count > 0)
     {
@@ -60,19 +57,19 @@ void StreamServer::cleanup()
 }
 
 
-void StreamServer::addSession(std::shared_ptr<StreamSession> session)
+void StreamServer::addSession(const std::shared_ptr<StreamSession>& session)
 {
     session->setMessageReceiver(this);
     session->setBufferMs(settings_.stream.bufferMs);
     session->start();
 
     std::lock_guard<std::recursive_mutex> mlock(sessionsMutex_);
-    sessions_.emplace_back(std::move(session));
+    sessions_.emplace_back(session);
     cleanup();
 }
 
 
-void StreamServer::onChunkEncoded(const PcmStream* pcmStream, bool isDefaultStream, std::shared_ptr<msg::PcmChunk> chunk, double /*duration*/)
+void StreamServer::onChunkEncoded(const PcmStream* pcmStream, bool isDefaultStream, const std::shared_ptr<msg::PcmChunk>& chunk, double /*duration*/)
 {
     // LOG(TRACE, LOG_TAG) << "onChunkRead (" << pcmStream->getName() << "): " << duration << "ms\n";
     shared_const_buffer buffer(*chunk);
@@ -115,10 +112,19 @@ void StreamServer::onChunkEncoded(const PcmStream* pcmStream, bool isDefaultStre
 }
 
 
-void StreamServer::onMessageReceived(StreamSession* streamSession, const msg::BaseMessage& baseMessage, char* buffer)
+void StreamServer::onMessageReceived(const std::shared_ptr<StreamSession>& streamSession, const msg::BaseMessage& baseMessage, char* buffer)
 {
-    if (messageReceiver_ != nullptr)
-        messageReceiver_->onMessageReceived(streamSession, baseMessage, buffer);
+    try
+    {
+        if (messageReceiver_ != nullptr)
+            messageReceiver_->onMessageReceived(streamSession, baseMessage, buffer);
+    }
+    catch (const std::exception& e)
+    {
+        LOG(ERROR, LOG_TAG) << "Server::onMessageReceived exception: " << e.what() << ", message type: " << baseMessage.type << "\n";
+        auto session = getStreamSession(streamSession.get());
+        session->stop();
+    }
 }
 
 
@@ -133,10 +139,11 @@ void StreamServer::onDisconnect(StreamSession* streamSession)
     LOG(INFO, LOG_TAG) << "onDisconnect: " << session->clientId << "\n";
     LOG(DEBUG, LOG_TAG) << "sessions: " << sessions_.size() << "\n";
     sessions_.erase(std::remove_if(sessions_.begin(), sessions_.end(),
-                                   [streamSession](std::weak_ptr<StreamSession> session) {
-                                       auto s = session.lock();
-                                       return s.get() == streamSession;
-                                   }),
+                                   [streamSession](const std::weak_ptr<StreamSession>& session)
+    {
+        auto s = session.lock();
+        return s.get() == streamSession;
+    }),
                     sessions_.end());
     LOG(DEBUG, LOG_TAG) << "sessions: " << sessions_.size() << "\n";
     if (messageReceiver_ != nullptr)
@@ -175,7 +182,8 @@ session_ptr StreamServer::getStreamSession(const std::string& clientId) const
 
 void StreamServer::startAccept()
 {
-    auto accept_handler = [this](error_code ec, tcp::socket socket) {
+    auto accept_handler = [this](error_code ec, tcp::socket socket)
+    {
         if (!ec)
             handleAccept(std::move(socket));
         else
@@ -200,13 +208,13 @@ void StreamServer::handleAccept(tcp::socket socket)
         /// experimental: turn on tcp::no_delay
         socket.set_option(tcp::no_delay(true));
 
-        LOG(NOTICE, LOG_TAG) << "StreamServer::NewConnection: " << socket.remote_endpoint().address().to_string() << endl;
-        shared_ptr<StreamSession> session = make_shared<StreamSessionTcp>(this, std::move(socket));
+        LOG(NOTICE, LOG_TAG) << "StreamServer::NewConnection: " << socket.remote_endpoint().address().to_string() << "\n";
+        shared_ptr<StreamSession> session = make_shared<StreamSessionTcp>(this, settings_, std::move(socket));
         addSession(session);
     }
     catch (const std::exception& e)
     {
-        LOG(ERROR, LOG_TAG) << "Exception in StreamServer::handleAccept: " << e.what() << endl;
+        LOG(ERROR, LOG_TAG) << "Exception in StreamServer::handleAccept: " << e.what() << "\n";
     }
     startAccept();
 }
@@ -214,17 +222,20 @@ void StreamServer::handleAccept(tcp::socket socket)
 
 void StreamServer::start()
 {
-    for (const auto& address : settings_.stream.bind_to_address)
+    if (settings_.tcp_stream.enabled)
     {
-        try
+        for (const auto& address : settings_.tcp_stream.bind_to_address)
         {
-            LOG(INFO, LOG_TAG) << "Creating stream acceptor for address: " << address << ", port: " << settings_.stream.port << "\n";
-            acceptor_.emplace_back(make_unique<tcp::acceptor>(net::make_strand(io_context_.get_executor()),
-                                                              tcp::endpoint(boost::asio::ip::address::from_string(address), settings_.stream.port)));
-        }
-        catch (const boost::system::system_error& e)
-        {
-            LOG(ERROR, LOG_TAG) << "error creating TCP acceptor: " << e.what() << ", code: " << e.code() << "\n";
+            try
+            {
+                LOG(INFO, LOG_TAG) << "Creating TCP stream acceptor for address: " << address << ", port: " << settings_.tcp_stream.port << "\n";
+                acceptor_.emplace_back(make_unique<tcp::acceptor>(boost::asio::make_strand(io_context_.get_executor()),
+                                                                  tcp::endpoint(boost::asio::ip::make_address(address), settings_.tcp_stream.port)));
+            }
+            catch (const boost::system::system_error& e)
+            {
+                LOG(ERROR, LOG_TAG) << "error creating TCP stream acceptor: " << e.what() << ", code: " << e.code() << "\n";
+            }
         }
     }
 

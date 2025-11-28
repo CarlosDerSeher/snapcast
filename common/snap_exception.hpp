@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2020  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,40 +16,41 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef SNAP_EXCEPTION_HPP
-#define SNAP_EXCEPTION_HPP
+#pragma once
 
-#include <cstring> // std::strlen, std::strcpy
+// standard headers
 #include <exception>
 #include <string>
 
-// text_exception uses a dynamically-allocated internal c-string for what():
+/// Snapcast specific exceptions
 class SnapException : public std::exception
 {
     std::string text_;
     int error_code_;
 
 public:
-    SnapException(const char* text, int error_code = 0) : text_(text), error_code_(error_code)
+    /// c'tor
+    explicit SnapException(const char* text, int error_code = 0) : text_(text), error_code_(error_code)
     {
     }
 
-    SnapException(const std::string& text, int error_code = 0) : SnapException(text.c_str(), error_code)
+    /// c'tor
+    explicit SnapException(const std::string& text, int error_code = 0) : SnapException(text.c_str(), error_code)
     {
     }
 
-    ~SnapException() throw() override = default;
+    /// d'tor
+    ~SnapException() override = default;
 
+    /// @return error code
     int code() const noexcept
     {
         return error_code_;
     }
 
+    /// @return the exception text
     const char* what() const noexcept override
     {
         return text_.c_str();
     }
 };
-
-
-#endif

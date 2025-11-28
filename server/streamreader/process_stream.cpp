@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -25,10 +25,8 @@
 #include "common/snap_exception.hpp"
 #include "common/utils.hpp"
 #include "common/utils/file_utils.hpp"
-#include "common/utils/string_utils.hpp"
 
 // standard headers
-#include <climits>
 #include <cstdio>
 
 
@@ -40,13 +38,23 @@ namespace streamreader
 static constexpr auto LOG_TAG = "ProcessStream";
 
 
-ProcessStream::ProcessStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri)
-    : PosixStream(pcmListener, ioc, server_settings, uri)
+ProcessStream::ProcessStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri,
+                             PcmStream::Source source)
+    : AsioStream<stream_descriptor>(pcmListener, ioc, server_settings, uri, source)
 {
     params_ = uri_.getQuery("params");
     wd_timeout_sec_ = cpt::stoul(uri_.getQuery("wd_timeout", "0"));
     LOG(DEBUG, LOG_TAG) << "Watchdog timeout: " << wd_timeout_sec_ << "\n";
     logStderr_ = (uri_.getQuery("log_stderr", "false") == "true");
+
+    if (source == Source::rpc)
+    {
+        auto exe_path = utils::file::isInDirectory(uri.path, server_settings.stream.sandbox_dir);
+        // check if exe is located in sandbox_dir
+        if (!exe_path)
+            throw SnapException("Process stream executable must be located in '" + server_settings.stream.sandbox_dir.native() + "'");
+        uri_.path = exe_path->native();
+    }
 }
 
 
@@ -66,14 +74,14 @@ std::string ProcessStream::findExe(const std::string& filename) const
         return which;
 
     /// check in the same path as this binary
-    char buff[PATH_MAX];
-    char szTmp[32];
-    sprintf(szTmp, "/proc/%d/exe", getpid());
-    ssize_t len = readlink(szTmp, buff, sizeof(buff) - 1);
+    std::array<char, PATH_MAX> buff;
+    std::array<char, 32> szTmp;
+    sprintf(szTmp.data(), "/proc/%d/exe", getpid());
+    ssize_t len = readlink(szTmp.data(), buff.data(), buff.size() - 1);
     if (len != -1)
     {
         buff[len] = '\0';
-        return string(buff) + "/" + exe;
+        return string(buff.data()) + "/" + exe;
     }
 
     return "";
@@ -95,7 +103,7 @@ void ProcessStream::initExeAndPath(const std::string& filename)
 }
 
 
-void ProcessStream::do_connect()
+void ProcessStream::connect()
 {
     if (!active_)
         return;
@@ -116,8 +124,8 @@ void ProcessStream::do_connect()
     on_connect();
     if (wd_timeout_sec_ > 0)
     {
-        watchdog_ = make_unique<Watchdog>(strand_, this);
-        watchdog_->start(std::chrono::seconds(wd_timeout_sec_));
+        watchdog_ = make_unique<Watchdog>(strand_);
+        watchdog_->start(std::chrono::seconds(wd_timeout_sec_), [this](std::chrono::milliseconds ms) { onTimeout(ms); });
     }
     else
     {
@@ -127,10 +135,11 @@ void ProcessStream::do_connect()
 }
 
 
-void ProcessStream::do_disconnect()
+void ProcessStream::disconnect()
 {
     if (process_.running())
         ::kill(-process_.native_handle(), SIGINT);
+    AsioStream<stream_descriptor>::disconnect();
 }
 
 
@@ -146,7 +155,9 @@ void ProcessStream::onStderrMsg(const std::string& line)
 void ProcessStream::stderrReadLine()
 {
     const std::string delimiter = "\n";
-    boost::asio::async_read_until(*stream_stderr_, streambuf_stderr_, delimiter, [this, delimiter](const std::error_code& ec, std::size_t bytes_transferred) {
+    boost::asio::async_read_until(*stream_stderr_, streambuf_stderr_, delimiter,
+                                  [this, self = shared_from_this(), delimiter](const std::error_code& ec, std::size_t bytes_transferred)
+    {
         if (ec)
         {
             LOG(ERROR, LOG_TAG) << "Error while reading from stderr: " << ec.message() << "\n";
@@ -170,7 +181,7 @@ void ProcessStream::stderrReadLine()
 }
 
 
-void ProcessStream::onTimeout(const Watchdog& /*watchdog*/, std::chrono::milliseconds ms)
+void ProcessStream::onTimeout(std::chrono::milliseconds ms)
 {
     LOG(ERROR, LOG_TAG) << "Watchdog timeout: " << ms.count() / 1000 << "s\n";
     if (process_)

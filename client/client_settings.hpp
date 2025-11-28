@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2020  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,68 +16,116 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef CLIENT_SETTINGS_HPP
-#define CLIENT_SETTINGS_HPP
+#pragma once
 
-#include <string>
-#include <vector>
-
+// local headers
 #include "common/sample_format.hpp"
+#include "common/stream_uri.hpp"
 #include "player/pcm_device.hpp"
 
+// standard headers
+#include <filesystem>
+#include <optional>
+#include <string>
 
+
+/// Snapclient settings
 struct ClientSettings
 {
-    enum class SharingMode
+    /// Sharing mode for audio device
+    enum class SharingMode : char
     {
-        unspecified,
-        exclusive,
-        shared
+        unspecified, ///< unspecified
+        exclusive,   ///< exclusice access
+        shared       ///< shared access
     };
 
+    /// Mixer settings
     struct Mixer
     {
-        enum class Mode
+        /// Mixer mode
+        enum class Mode : char
         {
-            hardware,
-            software,
-            script,
-            none
+            hardware, ///< hardware mixer
+            software, ///< software mixer
+            script,   ///< run a mixer script
+            none      ///< no mixer
         };
 
+        /// the configured mixer mode
         Mode mode{Mode::software};
-        std::string parameter{""};
+        /// mixer parameter
+        std::string parameter;
     };
 
+    /// Server settings
     struct Server
     {
-        std::string host{""};
-        size_t port{1704};
+        /// Auth info
+        struct Auth
+        {
+            /// the scheme (Basic, Plain, bearer, ...)
+            std::string scheme;
+            /// the param (base64 encoded "<user>:<password>", "<user>:<password>", token, ...)
+            std::string param;
+        };
+
+        /// Server host
+        StreamUri uri;
+        /// auth info
+        std::optional<Auth> auth;
+        /// server certificate
+        std::optional<std::filesystem::path> server_certificate;
+        /// Certificate file
+        std::filesystem::path certificate;
+        /// Private key file
+        std::filesystem::path certificate_key;
+        /// Password for encrypted key file
+        std::string key_password;
+        /// Is ssl in use?
+        bool isSsl() const
+        {
+            return (uri.scheme == "wss");
+        }
     };
 
+    /// The audio player (DAC)
     struct Player
     {
-        std::string player_name{""};
-        std::string parameter{""};
+        /// name of the player
+        std::string player_name;
+        /// player parameters
+        std::string parameter;
+        /// additional latency of the DAC [ms]
         int latency{0};
+        /// the DAC
         player::PcmDevice pcm_device;
+        /// Sampleformat to be uses, i.e. 48000:16:2
         SampleFormat sample_format;
+        /// The sharing mode
         SharingMode sharing_mode{SharingMode::unspecified};
+        /// Mixer settings
         Mixer mixer;
     };
 
+    /// Log settings
     struct Logging
     {
-        std::string sink{""};
+        /// The log sink (null,system,stdout,stderr,file)
+        std::string sink;
+        /// Log filter
         std::string filter{"*:info"};
     };
 
+    /// The snapclient process instance
     size_t instance{1};
+    /// The host id, presented to the server
     std::string host_id;
 
+    /// Server settings
     Server server;
+    /// Player settings
     Player player;
+    /// Logging settings
     Logging logging;
 };
-
-#endif

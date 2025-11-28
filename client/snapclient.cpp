@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,14 +16,10 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#include <chrono>
-#include <iostream>
-#ifndef WINDOWS
-#include <csignal>
-#include <sys/resource.h>
-#endif
-
+// local headers
+#include "common/base64.h"
 #include "common/popl.hpp"
+#include "common/utils/string_utils.hpp"
 #include "controller.hpp"
 
 #ifdef HAS_ALSA
@@ -35,6 +31,9 @@
 #ifdef HAS_WASAPI
 #include "player/wasapi_player.hpp"
 #endif
+#ifdef HAS_PIPEWIRE
+#include "player/pipewire_player.hpp"
+#endif
 #include "player/file_player.hpp"
 #ifdef HAS_DAEMON
 #include "common/daemon.hpp"
@@ -43,11 +42,23 @@
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
-#include "common/utils.hpp"
+#include "common/stream_uri.hpp"
 #include "common/version.hpp"
 
+// 3rd party headers
 #include <boost/asio/ip/host_name.hpp>
 #include <boost/asio/signal_set.hpp>
+
+// standard headers
+#include <algorithm>
+#include <filesystem>
+#include <iostream>
+#include <vector>
+#ifndef WINDOWS
+#include <csignal>
+#include <sys/resource.h>
+#endif
+
 
 using namespace std;
 using namespace popl;
@@ -57,12 +68,12 @@ using namespace std::chrono_literals;
 
 static constexpr auto LOG_TAG = "Snapclient";
 
-
+namespace
+{
 PcmDevice getPcmDevice(const std::string& player, const std::string& parameter, const std::string& soundcard)
 {
-    LOG(DEBUG, LOG_TAG) << "Trying to get PCM device for player: " << player << ", parameter: "
-                        << ", card: " << soundcard << "\n";
-#if defined(HAS_ALSA) || defined(HAS_PULSE) || defined(HAS_WASAPI)
+    LOG(DEBUG, LOG_TAG) << "Trying to get PCM device for player: " << player << ", parameter: " << ", card: " << soundcard << "\n";
+#if defined(HAS_ALSA) || defined(HAS_PULSE) || defined(HAS_WASAPI) || defined(HAS_PIPEWIRE)
     vector<PcmDevice> pcm_devices;
 #if defined(HAS_ALSA)
     if (player == player::ALSA)
@@ -76,12 +87,18 @@ PcmDevice getPcmDevice(const std::string& player, const std::string& parameter, 
     if (player == player::WASAPI)
         pcm_devices = WASAPIPlayer::pcm_list();
 #endif
+#if defined(HAS_PIPEWIRE)
+    if (player == player::PIPEWIRE)
+        pcm_devices = PipeWirePlayer::pcm_list(parameter);
+#endif
     if (player == player::FILE)
         return FilePlayer::pcm_list(parameter).front();
     try
     {
+        // If "soundcard" can be converted to an integer,
+        // try to map the device by index
         int soundcardIdx = cpt::stoi(soundcard);
-        for (auto dev : pcm_devices)
+        for (const auto& dev : pcm_devices)
             if (dev.idx == soundcardIdx)
                 return dev;
     }
@@ -89,7 +106,7 @@ PcmDevice getPcmDevice(const std::string& player, const std::string& parameter, 
     {
     }
 
-    for (auto dev : pcm_devices)
+    for (const auto& dev : pcm_devices)
         if (dev.name.find(soundcard) != string::npos)
             return dev;
 #endif
@@ -99,6 +116,7 @@ PcmDevice getPcmDevice(const std::string& player, const std::string& parameter, 
     pcm_device.name = soundcard;
     return pcm_device;
 }
+} // namespace
 
 #ifdef WINDOWS
 // hack to avoid case destinction in the signal handler
@@ -126,29 +144,55 @@ int main(int argc, char** argv)
 #ifdef MACOS
 #pragma message "Warning: the macOS support is experimental and might not be maintained"
 #endif
+
+#ifdef HAS_MDNS
+    const std::string default_uri = "tcp://_snapcast._tcp";
+#endif
+
     int exitcode = EXIT_SUCCESS;
     try
     {
         ClientSettings settings;
         string pcm_device(player::DEFAULT_DEVICE);
 
-        OptionParser op("Allowed options");
-        auto helpSwitch = op.add<Switch>("", "help", "produce help message");
-        auto groffSwitch = op.add<Switch, Attribute::hidden>("", "groff", "produce groff message");
-        auto versionSwitch = op.add<Switch>("v", "version", "show version number");
-        op.add<Value<string>>("h", "host", "server hostname or ip address", "", &settings.server.host);
-        op.add<Value<size_t>>("p", "port", "server port", 1704, &settings.server.port);
-        op.add<Value<size_t>>("i", "instance", "instance id when running multiple instances on the same host", 1, &settings.instance);
-        op.add<Value<string>>("", "hostID", "unique host id, default is MAC address", "", &settings.host_id);
+        OptionParser op("Usage: snapclient [options...] [url]\n\n"
+                        " With 'url' = "
+#ifdef HAS_OPENSSL
+                        "<tcp|ws|wss>"
+#else
+                        "<tcp|ws>"
+#endif
+#ifdef HAS_MDNS
+                        "://<snapserver host or IP or mDNS service name>[:port]\n"
+                        " For example: 'tcp://192.168.1.1:1704', or 'ws://)homeserver.local' or 'wss://_snapcast-https._tcp'\n"
+                        " If 'url' is not configured, snapclient defaults to '" +
+                        default_uri + "'\n");
+#else
+                        "://<snapserver host or IP>[:port]\n"
+                        " For example: 'tcp://192.168.1.1:1704', or 'ws://homeserver.local'\n");
+#endif
+        auto helpSwitch = op.add<Switch>("", "help", "Produce help message");
+        auto groffSwitch = op.add<Switch, Attribute::hidden>("", "groff", "Produce groff message");
+        auto versionSwitch = op.add<Switch>("v", "version", "Show version number");
+        auto deprecated_host_opt = op.add<Value<string>>("h", "host", "(deprecated, use [url]) Server hostname or ip address", "");
+        auto deprecated_port_opt = op.add<Value<size_t>>("p", "port", "(deprecated, use [url]) Server port", 1704);
+        op.add<Value<size_t>>("i", "instance", "Instance id when running multiple instances on the same host", 1, &settings.instance);
+        op.add<Value<string>>("", "hostID", "Unique host id, default is MAC address", "", &settings.host_id);
+        op.add<Value<std::filesystem::path>>("", "cert", "Client certificate file (PEM format)", settings.server.certificate, &settings.server.certificate);
+        op.add<Value<std::filesystem::path>>("", "cert-key", "Client private key file (PEM format)", settings.server.certificate_key,
+                                             &settings.server.certificate_key);
+        op.add<Value<string>>("", "key-password", "Key password (for encrypted private key)", settings.server.key_password, &settings.server.key_password);
+        auto server_cert_opt =
+            op.add<Implicit<std::filesystem::path>>("", "server-cert", "Verify server with CA certificate (PEM format)", "default certificates");
 
 // PCM device specific
-#if defined(HAS_ALSA) || defined(HAS_PULSE) || defined(HAS_WASAPI)
-        auto listSwitch = op.add<Switch>("l", "list", "list PCM devices");
-        /*auto soundcardValue =*/op.add<Value<string>>("s", "soundcard", "index or name of the pcm device", pcm_device, &pcm_device);
+#if defined(HAS_ALSA) || defined(HAS_PULSE) || defined(HAS_WASAPI) || defined(HAS_PIPEWIRE)
+        auto listSwitch = op.add<Switch>("l", "list", "List PCM devices");
+        op.add<Value<string>>("s", "soundcard", "Index or name of the PCM device", pcm_device, &pcm_device);
 #endif
-        /*auto latencyValue =*/op.add<Value<int>>("", "latency", "latency of the PCM device", 0, &settings.player.latency);
+        op.add<Value<int>>("", "latency", "Latency of the PCM device", 0, &settings.player.latency);
 #ifdef HAS_SOXR
-        auto sample_format = op.add<Value<string>>("", "sampleformat", "resample audio stream to <rate>:<bits>:<channels>", "");
+        auto sample_format = op.add<Value<string>>("", "sampleformat", "Resample audio stream to <rate>:<bits>:<channels>", "");
 #endif
 
         auto supported_players = Controller::getSupportedPlayerNames();
@@ -159,7 +203,7 @@ int main(int argc, char** argv)
 
 // sharing mode
 #if defined(HAS_OBOE) || defined(HAS_WASAPI)
-        auto sharing_mode = op.add<Value<string>>("", "sharingmode", "audio mode to use [shared|exclusive]", "shared");
+        auto sharing_mode = op.add<Value<string>>("", "sharingmode", "Audio mode to use [shared|exclusive]", "shared");
 #endif
 
         // mixer
@@ -168,22 +212,26 @@ int main(int argc, char** argv)
         hw_mixer_supported = true;
 #endif
         std::shared_ptr<popl::Value<std::string>> mixer_mode;
+
+        std::string mixers = "software";
         if (hw_mixer_supported)
-            mixer_mode = op.add<Value<string>>("", "mixer", "software|hardware|script|none|?[:<options>]", "software");
-        else
-            mixer_mode = op.add<Value<string>>("", "mixer", "software|script|none|?[:<options>]", "software");
+            mixers += "|hardware";
+#ifdef SUPPORTS_VOLUME_SCRIPT
+        mixers += "|script";
+#endif
+        mixer_mode = op.add<Value<string>>("", "mixer", mixers + "|none|?[:<options>]", "software");
 
 // daemon settings
 #ifdef HAS_DAEMON
         int processPriority(-3);
-        auto daemonOption = op.add<Implicit<int>>("d", "daemon", "daemonize, optional process priority [-20..19]", processPriority, &processPriority);
-        auto userValue = op.add<Value<string>>("", "user", "the user[:group] to run snapclient as when daemonized");
+        auto daemonOption = op.add<Implicit<int>>("d", "daemon", "Daemonize, optional process priority [-20..19]", processPriority, &processPriority);
+        auto userValue = op.add<Value<string>>("", "user", "The user[:group] to run snapclient as when daemonized");
 #endif
 
         // logging
-        op.add<Value<string>>("", "logsink", "log sink [null,system,stdout,stderr,file:<filename>]", settings.logging.sink, &settings.logging.sink);
+        op.add<Value<string>>("", "logsink", "Log sink [null,system,stdout,stderr,file:<filename>]", settings.logging.sink, &settings.logging.sink);
         auto logfilterOption = op.add<Value<string>>(
-            "", "logfilter", "log filter <tag>:<level>[,<tag>:<level>]* with tag = * or <log tag> and level = [trace,debug,info,notice,warning,error,fatal]",
+            "", "logfilter", "Log filter <tag>:<level>[,<tag>:<level>]* with tag = * or <log tag> and level = [trace,debug,info,notice,warning,error,fatal]",
             settings.logging.filter);
 
         try
@@ -192,7 +240,7 @@ int main(int argc, char** argv)
         }
         catch (const std::invalid_argument& e)
         {
-            cerr << "Exception: " << e.what() << std::endl;
+            cerr << "Exception: " << e.what() << "\n";
             cout << "\n" << op << "\n";
             exit(EXIT_FAILURE);
         }
@@ -200,7 +248,7 @@ int main(int argc, char** argv)
         if (versionSwitch->is_set())
         {
             cout << "snapclient v" << version::code << (!version::rev().empty() ? (" (rev " + version::rev(8) + ")") : ("")) << "\n"
-                 << "Copyright (C) 2014-2021 BadAix (snapcast@badaix.de).\n"
+                 << "Copyright (C) 2014-2025 BadAix (snapcast@badaix.de).\n"
                  << "License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.\n"
                  << "This is free software: you are free to change and redistribute it.\n"
                  << "There is NO WARRANTY, to the extent permitted by law.\n\n"
@@ -210,7 +258,7 @@ int main(int argc, char** argv)
 
         settings.player.player_name = utils::string::split_left(settings.player.player_name, ':', settings.player.parameter);
 
-#if defined(HAS_ALSA) || defined(HAS_PULSE) || defined(HAS_WASAPI)
+#if defined(HAS_ALSA) || defined(HAS_PULSE) || defined(HAS_WASAPI) || defined(HAS_PIPEWIRE)
         if (listSwitch->is_set())
         {
             try
@@ -227,6 +275,10 @@ int main(int argc, char** argv)
 #if defined(HAS_WASAPI)
                 if (settings.player.player_name == player::WASAPI)
                     pcm_devices = WASAPIPlayer::pcm_list();
+#endif
+#if defined(HAS_PIPEWIRE)
+                if (settings.player.player_name == player::PIPEWIRE)
+                    pcm_devices = PipeWirePlayer::pcm_list(settings.player.parameter);
 #endif
 #ifdef WINDOWS
                 // Set console code page to UTF-8 so console known how to interpret string data
@@ -298,10 +350,94 @@ int main(int argc, char** argv)
         else
             throw SnapException("Invalid log sink: " + settings.logging.sink);
 
-#if !defined(HAS_AVAHI) && !defined(HAS_BONJOUR)
-        if (settings.server.host.empty())
-            throw SnapException("Snapserver host not configured and mDNS not available, please configure with \"--host\".");
+        if (!op.unknown_options().empty())
+        {
+            throw SnapException("Unknown command line argument: '" + op.unknown_options().front() + "'");
+        }
+
+        if (deprecated_host_opt->is_set() || deprecated_port_opt->is_set())
+        {
+            LOG(WARNING, LOG_TAG) << "Options '--" << deprecated_host_opt->long_name() << "' and '--" << deprecated_port_opt->long_name()
+                                  << "' are deprecated. Please add the server URI as last command line argument\n";
+            settings.server.uri.host = deprecated_host_opt->value();
+            settings.server.uri.port = deprecated_port_opt->value();
+            settings.server.uri.scheme = "tcp";
+        }
+
+        if (!op.non_option_args().empty())
+        {
+            std::vector<std::string> schemes{"tcp", "ws"};
+#ifdef HAS_OPENSSL
+            schemes.emplace_back("wss");
 #endif
+            try
+            {
+                settings.server.uri.parse(op.non_option_args().front());
+            }
+            catch (...)
+            {
+                throw SnapException("Invalid URI - expected format: \"<scheme>://<host or IP>[:port]\", with 'scheme' one of: " +
+                                    utils::string::container_to_string(schemes));
+            }
+
+            if (std::find(schemes.begin(), schemes.end(), settings.server.uri.scheme) == schemes.end())
+                throw SnapException("Protocol must be one of: " + utils::string::container_to_string(schemes));
+
+            if (!settings.server.uri.port.has_value())
+            {
+                if (settings.server.uri.scheme == "tcp")
+                    settings.server.uri.port = 1704;
+                else if (settings.server.uri.scheme == "ws")
+                    settings.server.uri.port = 1780;
+                else if (settings.server.uri.scheme == "wss")
+                    settings.server.uri.port = 1788;
+            }
+
+            if (!settings.server.uri.user.empty() || !settings.server.uri.password.empty())
+            {
+                ClientSettings::Server::Auth auth;
+                auth.scheme = "Basic";
+                auth.param = base64_encode(settings.server.uri.user + ":" + settings.server.uri.password);
+                settings.server.auth = auth;
+            }
+        }
+
+        if (server_cert_opt->is_set())
+        {
+            if (server_cert_opt->get_default() == server_cert_opt->value())
+                settings.server.server_certificate = "";
+            else
+                settings.server.server_certificate = std::filesystem::weakly_canonical(server_cert_opt->value());
+            if (settings.server.server_certificate.value_or("").empty())
+                LOG(INFO, LOG_TAG) << "Server certificate: default certificates\n";
+            else
+                LOG(INFO, LOG_TAG) << "Server certificate: " << settings.server.server_certificate.value_or("") << "\n";
+        }
+
+        if (!settings.server.certificate.empty() && !settings.server.certificate_key.empty())
+        {
+            namespace fs = std::filesystem;
+            settings.server.certificate = fs::weakly_canonical(settings.server.certificate);
+            if (!fs::exists(settings.server.certificate))
+                throw SnapException("Certificate file not found: " + settings.server.certificate.string());
+            settings.server.certificate_key = fs::weakly_canonical(settings.server.certificate_key);
+            if (!fs::exists(settings.server.certificate_key))
+                throw SnapException("Certificate_key file not found: " + settings.server.certificate_key.string());
+        }
+        else if (settings.server.certificate.empty() != settings.server.certificate_key.empty())
+        {
+            throw SnapException("Both SSL 'certificate' and 'certificate_key' must be set or empty");
+        }
+
+        if (settings.server.uri.host.empty())
+        {
+#ifndef HAS_MDNS
+            throw SnapException("Snapserver host not configured and mDNS not available, please configure with \"--host\".");
+#else
+            LOG(INFO, LOG_TAG) << "No server URL given, defaulting to '" << default_uri << "'\n";
+            settings.server.uri.parse(default_uri);
+#endif
+        }
 
 
 #ifdef HAS_DAEMON
@@ -328,9 +464,9 @@ int main(int argc, char** argv)
             processPriority = std::min(std::max(-20, processPriority), 19);
             if (processPriority != 0)
                 setpriority(PRIO_PROCESS, 0, processPriority);
-            LOG(NOTICE, LOG_TAG) << "daemonizing" << std::endl;
+            LOG(NOTICE, LOG_TAG) << "daemonizing\n";
             daemon->daemonize();
-            LOG(NOTICE, LOG_TAG) << "daemon started" << std::endl;
+            LOG(NOTICE, LOG_TAG) << "daemon started\n";
         }
 #endif
 
@@ -375,6 +511,13 @@ int main(int argc, char** argv)
                      << " \"fragments=<number of buffers>\" - default 4, min 2\n";
             }
 #endif
+#ifdef HAS_PIPEWIRE
+            else if (settings.player.player_name == player::PIPEWIRE)
+            {
+                cout << "Options are:\n"
+                     << " \"buffer_time=<total buffer size [ms]>\" - default <not set, PipeWire will decide>, min 10\n";
+            }
+#endif
             else
             {
                 cout << "No options available for \"" << settings.player.player_name << "\n";
@@ -386,7 +529,10 @@ int main(int argc, char** argv)
 #if defined(HAS_ALSA)
         if (settings.player.pcm_device.idx == -1)
         {
-            LOG(ERROR, LOG_TAG) << "PCM device \"" << pcm_device << "\" not found\n";
+#if defined(HAS_PIPEWIRE)
+            if (settings.player.player_name != player::PIPEWIRE)
+#endif
+                LOG(ERROR, LOG_TAG) << "PCM device \"" << pcm_device << "\" not found\n";
             // exit(EXIT_FAILURE);
         }
 #endif
@@ -396,16 +542,26 @@ int main(int argc, char** argv)
             settings.player.mixer.mode = ClientSettings::Mixer::Mode::software;
         else if ((mode == "hardware") && hw_mixer_supported)
             settings.player.mixer.mode = ClientSettings::Mixer::Mode::hardware;
+#ifdef SUPPORTS_VOLUME_SCRIPT
         else if (mode == "script")
             settings.player.mixer.mode = ClientSettings::Mixer::Mode::script;
+#endif
         else if (mode == "none")
             settings.player.mixer.mode = ClientSettings::Mixer::Mode::none;
         else if ((mode == "?") || (mode == "help"))
         {
-            cout << "mixer can be one of 'software', " << (hw_mixer_supported ? "'hardware', " : "") << "'script', 'none'\n"
+            cout << "mixer can be one of 'software', " << (hw_mixer_supported ? "'hardware', " : "")
+#ifdef SUPPORTS_VOLUME_SCRIPT
+                 << "'script', "
+#endif
+                 << "'none'\n"
                  << "followed by optional parameters:\n"
                  << " * software[:poly[:<exponent>]|exp[:<base>]]\n"
-                 << (hw_mixer_supported ? " * hardware[:<mixer name>]\n" : "") << " * script[:<script filename>]\n";
+                 << (hw_mixer_supported ? " * hardware[:<mixer name>]\n" : "")
+#ifdef SUPPORTS_VOLUME_SCRIPT
+                 << " * script[:<script filename>]"
+#endif
+                 << "\n";
             exit(EXIT_SUCCESS);
         }
         else
@@ -414,7 +570,8 @@ int main(int argc, char** argv)
         boost::asio::io_context io_context;
         // Construct a signal set registered for process termination.
         boost::asio::signal_set signals(io_context, SIGHUP, SIGINT, SIGTERM);
-        signals.async_wait([&](const boost::system::error_code& ec, int signal) {
+        signals.async_wait([&](const boost::system::error_code& ec, int signal)
+        {
             if (!ec)
                 LOG(INFO, LOG_TAG) << "Received signal " << signal << ": " << strsignal(signal) << "\n";
             else
@@ -429,6 +586,7 @@ int main(int argc, char** argv)
 
         int num_threads = 0;
         std::vector<std::thread> threads;
+        threads.reserve(num_threads);
         for (int n = 0; n < num_threads; ++n)
             threads.emplace_back([&] { io_context.run(); });
         io_context.run();
@@ -437,10 +595,10 @@ int main(int argc, char** argv)
     }
     catch (const std::exception& e)
     {
-        LOG(FATAL, LOG_TAG) << "Exception: " << e.what() << std::endl;
+        LOG(FATAL, LOG_TAG) << "Exception: " << e.what() << "\n";
         exitcode = EXIT_FAILURE;
     }
 
-    LOG(NOTICE, LOG_TAG) << "Snapclient terminated." << endl;
+    LOG(NOTICE, LOG_TAG) << "Snapclient terminated.\n";
     exit(exitcode);
 }

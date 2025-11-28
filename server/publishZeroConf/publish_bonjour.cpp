@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2020  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,22 +16,29 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#include <cstdlib>
-#include <thread>
-
-#include "common/aixlog.hpp"
+// prototype/interface header file
 #include "publish_bonjour.hpp"
+
+// local headers
+#include "common/aixlog.hpp"
+
+// 3rd party headers
+
+// standard headers
+#include <cstdlib>
+
 
 static constexpr auto LOG_TAG = "Bonjour";
 
+/// Opaque16
 typedef union
 {
-    unsigned char b[2];
-    unsigned short NotAnInteger;
+    unsigned char b[2];          ///< b
+    unsigned short NotAnInteger; ///< not an int
 } Opaque16;
 
 
-PublishBonjour::PublishBonjour(const std::string& serviceName, boost::asio::io_context& ioc) : PublishmDNS(serviceName, ioc), active_(false)
+PublishBonjour::PublishBonjour(std::string serviceName, boost::asio::io_context& ioc) : PublishmDNS(std::move(serviceName), ioc), active_(false)
 {
     ///	dns-sd -R Snapcast _snapcast._tcp local 1704
     ///	dns-sd -R Snapcast _snapcast-jsonrpc._tcp local 1705

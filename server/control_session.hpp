@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2024  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,17 +16,17 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef CONTROL_SESSION_H
-#define CONTROL_SESSION_H
+#pragma once
 
-#include "common/queue.h"
-#include "message/message.hpp"
+// local headers
+#include "authinfo.hpp"
 #include "server_settings.hpp"
-#include <atomic>
-#include <boost/asio.hpp>
-#include <condition_variable>
+
+// 3rd party headers
+
+// standard headers
+#include <functional>
 #include <memory>
-#include <set>
 #include <string>
 
 
@@ -37,10 +37,14 @@ class StreamSession;
 class ControlMessageReceiver
 {
 public:
-    using ResponseHander = std::function<void(const std::string& response)>;
+    /// Response callback function for requests
+    using ResponseHandler = std::function<void(const std::string& response)>;
     // TODO: rename, error handling
-    virtual void onMessageReceived(std::shared_ptr<ControlSession> session, const std::string& message, const ResponseHander& response_handler) = 0;
+    /// Called when a comtrol message @p message is received by @p session, response is written to @p response_handler
+    virtual void onMessageReceived(std::shared_ptr<ControlSession> session, const std::string& message, const ResponseHandler& response_handler) = 0;
+    /// Called when a comtrol session is created
     virtual void onNewSession(std::shared_ptr<ControlSession> session) = 0;
+    /// Called when a stream session is created
     virtual void onNewSession(std::shared_ptr<StreamSession> session) = 0;
 };
 
@@ -55,20 +59,22 @@ class ControlSession : public std::enable_shared_from_this<ControlSession>
 {
 public:
     /// ctor. Received message from the client are passed to ControlMessageReceiver
-    ControlSession(ControlMessageReceiver* receiver) : message_receiver_(receiver)
+    ControlSession(ControlMessageReceiver* receiver, const ServerSettings& settings) : authinfo(settings.auth), message_receiver_(receiver)
     {
     }
     virtual ~ControlSession() = default;
+    /// Start the control session
     virtual void start() = 0;
+    /// Stop the control session
     virtual void stop() = 0;
 
     /// Sends a message to the client (asynchronous)
     virtual void sendAsync(const std::string& message) = 0;
 
+    /// Authentication info attached to this session
+    AuthInfo authinfo;
+
 protected:
+    /// The control message receiver
     ControlMessageReceiver* message_receiver_;
 };
-
-
-
-#endif

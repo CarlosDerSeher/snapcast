@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2024  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,13 +16,15 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "browse_avahi.hpp"
+
+// local headers
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
+
+// standard headers
 #include <cassert>
-#include <cstdio>
-#include <cstdlib>
-#include <ctime>
 #include <iostream>
 
 
@@ -77,7 +79,7 @@ void BrowseAvahi::resolve_callback(AvahiServiceResolver* r, AVAHI_GCC_UNUSED Ava
 
         case AVAHI_RESOLVER_FOUND:
         {
-            char a[AVAHI_ADDRESS_STR_MAX], *t;
+            char a[AVAHI_ADDRESS_STR_MAX], *t; // NOLINT
 
             LOG(INFO, LOG_TAG) << "Service '" << name << "' of type '" << type << "' in domain '" << domain << "':\n";
 
@@ -133,9 +135,11 @@ void BrowseAvahi::browse_callback(AvahiServiceBrowser* b, AvahiIfIndex interface
                the callback function is called the server will free
                the resolver for us. */
 
+            // NOLINTBEGIN
             if ((avahi_service_resolver_new(browseAvahi->client_, interface, protocol, name, type, domain, AVAHI_PROTO_UNSPEC, static_cast<AvahiLookupFlags>(0),
                                             resolve_callback, userdata)) == nullptr)
                 LOG(ERROR, LOG_TAG) << "Failed to resolve service '" << name << "': " << avahi_strerror(avahi_client_errno(browseAvahi->client_)) << "\n";
+            // NOLINTEND
 
             break;
 
@@ -176,6 +180,7 @@ bool BrowseAvahi::browse(const std::string& serviceName, mDNSResult& result, int
 
         /* Allocate a new client */
         int error;
+        // NOLINTBEGIN
         if ((client_ = avahi_client_new(avahi_simple_poll_get(simple_poll), static_cast<AvahiClientFlags>(0), client_callback, this, &error)) == nullptr)
             throw SnapException("BrowseAvahi - Failed to create client: " + std::string(avahi_strerror(error)));
 
@@ -183,6 +188,7 @@ bool BrowseAvahi::browse(const std::string& serviceName, mDNSResult& result, int
         if ((sb_ = avahi_service_browser_new(client_, AVAHI_IF_UNSPEC, AVAHI_PROTO_INET, serviceName.c_str(), nullptr, static_cast<AvahiLookupFlags>(0),
                                              browse_callback, this)) == nullptr)
             throw SnapException("BrowseAvahi - Failed to create service browser: " + std::string(avahi_strerror(avahi_client_errno(client_))));
+        // NOLINTEND
 
         result_.valid = false;
         while (timeout > 0)

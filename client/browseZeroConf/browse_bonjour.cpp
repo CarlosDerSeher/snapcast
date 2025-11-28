@@ -1,8 +1,32 @@
+/***
+    This file is part of snapcast
+    Copyright (C) 2014-2025  Johannes Pohl
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+***/
+
+
+// prototype/interface header file
 #include "browse_bonjour.hpp"
 
+// local headers
+#include "common/aixlog.hpp"
+#include "common/snap_exception.hpp"
+
+// standard headers
 #include <deque>
 #include <iostream>
-#include <memory>
 #ifdef WINDOWS
 #include <WinSock2.h>
 #include <Ws2tcpip.h>
@@ -11,15 +35,15 @@
 #include <sys/socket.h>
 #endif
 
-#include "common/aixlog.hpp"
-#include "common/snap_exception.hpp"
 
 using namespace std;
 
 static constexpr auto LOG_TAG = "Bonjour";
 
+/// DNSServiceRefDeleter
 struct DNSServiceRefDeleter
 {
+    /// operator ()
     void operator()(DNSServiceRef* ref)
     {
         DNSServiceRefDeallocate(*ref);
@@ -29,6 +53,7 @@ struct DNSServiceRefDeleter
 
 using DNSServiceHandle = std::unique_ptr<DNSServiceRef, DNSServiceRefDeleter>;
 
+/// @return @p error as string
 string BonjourGetError(DNSServiceErrorType error)
 {
     switch (error)
@@ -132,21 +157,26 @@ string BonjourGetError(DNSServiceErrorType error)
     }
 }
 
+/// mDNS reply
 struct mDNSReply
 {
-    string name, regtype, domain;
+    string name;    ///< name
+    string regtype; ///< reg type
+    string domain;  ///< domain
 };
 
+/// mDNS resolve
 struct mDNSResolve
 {
-    string fullName;
-    uint16_t port;
+    string fullName; ///< full name
+    uint16_t port;   ///< port
 };
 
 #define CHECKED(err)                                                                                                                                           \
     if ((err) != kDNSServiceErr_NoError)                                                                                                                       \
         throw SnapException(BonjourGetError(err) + ":" + to_string(__LINE__));
 
+/// run service @p service
 void runService(const DNSServiceHandle& service)
 {
     if (!*service)
@@ -176,16 +206,16 @@ bool BrowseBonjour::browse(const string& serviceName, mDNSResult& result, int /*
     deque<mDNSReply> replyCollection;
     {
         DNSServiceHandle service(new DNSServiceRef(NULL));
-        CHECKED(DNSServiceBrowse(
-            service.get(), 0, 0, serviceName.c_str(), "local.",
-            [](DNSServiceRef /*service*/, DNSServiceFlags /*flags*/, uint32_t /*interfaceIndex*/, DNSServiceErrorType errorCode, const char* serviceName,
-               const char* regtype, const char* replyDomain, void* context) {
-                auto replyCollection = static_cast<deque<mDNSReply>*>(context);
+        CHECKED(DNSServiceBrowse(service.get(), 0, 0, serviceName.c_str(), "local.",
+                                 [](DNSServiceRef /*service*/, DNSServiceFlags /*flags*/, uint32_t /*interfaceIndex*/, DNSServiceErrorType errorCode,
+                                    const char* serviceName, const char* regtype, const char* replyDomain, void* context)
+        {
+            auto replyCollection = static_cast<deque<mDNSReply>*>(context);
 
-                CHECKED(errorCode);
-                replyCollection->push_back(mDNSReply{string(serviceName), string(regtype), string(replyDomain)});
-            },
-            &replyCollection));
+            CHECKED(errorCode);
+            replyCollection->push_back(mDNSReply{string(serviceName), string(regtype), string(replyDomain)});
+        },
+                                 &replyCollection));
 
         runService(service);
     }
@@ -195,47 +225,48 @@ bool BrowseBonjour::browse(const string& serviceName, mDNSResult& result, int /*
     {
         DNSServiceHandle service(new DNSServiceRef(NULL));
         for (auto& reply : replyCollection)
-            CHECKED(DNSServiceResolve(
-                service.get(), 0, 0, reply.name.c_str(), reply.regtype.c_str(), reply.domain.c_str(),
-                [](DNSServiceRef /*service*/, DNSServiceFlags /*flags*/, uint32_t /*interfaceIndex*/, DNSServiceErrorType errorCode, const char* /*fullName*/,
-                   const char* hosttarget, uint16_t port, uint16_t /*txtLen*/, const unsigned char* /*txtRecord*/, void* context) {
-                    auto resultCollection = static_cast<deque<mDNSResolve>*>(context);
+            CHECKED(DNSServiceResolve(service.get(), 0, 0, reply.name.c_str(), reply.regtype.c_str(), reply.domain.c_str(),
+                                      [](DNSServiceRef /*service*/, DNSServiceFlags /*flags*/, uint32_t /*interfaceIndex*/, DNSServiceErrorType errorCode,
+                                         const char* /*fullName*/, const char* hosttarget, uint16_t port, uint16_t /*txtLen*/,
+                                         const unsigned char* /*txtRecord*/, void* context)
+            {
+                auto resultCollection = static_cast<deque<mDNSResolve>*>(context);
 
-                    CHECKED(errorCode);
-                    resultCollection->push_back(mDNSResolve{string(hosttarget), ntohs(port)});
-                },
-                &resolveCollection));
+                CHECKED(errorCode);
+                resultCollection->push_back(mDNSResolve{string(hosttarget), ntohs(port)});
+            },
+                                      &resolveCollection));
 
         runService(service);
     }
 
     // DNS/mDNS Resolve
-    deque<mDNSResult> resultCollection(resolveCollection.size(), mDNSResult{IPVersion::IPv4, 0, "", "", 0, false});
+    deque<mDNSResult> resultCollection(resolveCollection.size(), mDNSResult{});
     {
         DNSServiceHandle service(new DNSServiceRef(NULL));
         unsigned i = 0;
         for (auto& resolve : resolveCollection)
         {
             resultCollection[i].port = resolve.port;
-            CHECKED(DNSServiceGetAddrInfo(
-                service.get(), kDNSServiceFlagsLongLivedQuery, 0, kDNSServiceProtocol_IPv4, resolve.fullName.c_str(),
-                [](DNSServiceRef /*service*/, DNSServiceFlags /*flags*/, uint32_t interfaceIndex, DNSServiceErrorType /*errorCode*/, const char* hostname,
-                   const sockaddr* address, uint32_t /*ttl*/, void* context) {
-                    auto result = static_cast<mDNSResult*>(context);
+            CHECKED(DNSServiceGetAddrInfo(service.get(), kDNSServiceFlagsLongLivedQuery, 0, kDNSServiceProtocol_IPv4, resolve.fullName.c_str(),
+                                          [](DNSServiceRef /*service*/, DNSServiceFlags /*flags*/, uint32_t interfaceIndex, DNSServiceErrorType /*errorCode*/,
+                                             const char* hostname, const sockaddr* address, uint32_t /*ttl*/, void* context)
+            {
+                auto result = static_cast<mDNSResult*>(context);
 
-                    result->host = string(hostname);
-                    result->ip_version = (address->sa_family == AF_INET) ? (IPVersion::IPv4) : (IPVersion::IPv6);
-                    result->iface_idx = static_cast<int>(interfaceIndex);
+                result->host = string(hostname);
+                result->ip_version = (address->sa_family == AF_INET) ? (IPVersion::IPv4) : (IPVersion::IPv6);
+                result->iface_idx = static_cast<int>(interfaceIndex);
 
-                    char hostIP[NI_MAXHOST];
-                    char hostService[NI_MAXSERV];
-                    if (getnameinfo(address, sizeof(*address), hostIP, sizeof(hostIP), hostService, sizeof(hostService), NI_NUMERICHOST | NI_NUMERICSERV) == 0)
-                        result->ip = string(hostIP);
-                    else
-                        return;
-                    result->valid = true;
-                },
-                &resultCollection[i++]));
+                char hostIP[NI_MAXHOST];
+                char hostService[NI_MAXSERV];
+                if (getnameinfo(address, sizeof(*address), hostIP, sizeof(hostIP), hostService, sizeof(hostService), NI_NUMERICHOST | NI_NUMERICSERV) == 0)
+                    result->ip = string(hostIP);
+                else
+                    return;
+                result->valid = true;
+            },
+                                          &resultCollection[i++]));
         }
         runService(service);
     }
@@ -247,7 +278,7 @@ bool BrowseBonjour::browse(const string& serviceName, mDNSResult& result, int /*
         return false;
 
     if (resultCollection.size() > 1)
-        LOG(NOTICE, LOG_TAG) << "Multiple servers found.  Using first" << endl;
+        LOG(NOTICE, LOG_TAG) << "Multiple servers found.  Using first" << "\n";
 
     result = resultCollection.front();
 

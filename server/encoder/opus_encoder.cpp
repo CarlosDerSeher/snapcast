@@ -1,7 +1,7 @@
 /***
     This file is part of snapcast
     Copyright (C) 2015  Hannes Ellinger
-    Copyright (C) 2016-2021  Johannes Pohl
+    Copyright (C) 2016-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -17,11 +17,15 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "opus_encoder.hpp"
+
+// local headers
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
 #include "common/utils/string_utils.hpp"
+
 
 using namespace std;
 
@@ -40,13 +44,13 @@ namespace
 template <typename T>
 void assign(void* pointer, T val)
 {
-    T* p = (T*)pointer;
+    T* p = static_cast<T*>(pointer);
     *p = val;
 }
 } // namespace
 
 
-OpusEncoder::OpusEncoder(const std::string& codecOptions) : Encoder(codecOptions), enc_(nullptr)
+OpusEncoder::OpusEncoder(std::string codecOptions) : Encoder(std::move(codecOptions)), enc_(nullptr), remainder_max_size_(0)
 {
     headerChunk_ = make_unique<msg::CodecHeader>("opus");
 }
@@ -200,8 +204,7 @@ void OpusEncoder::encode(const msg::PcmChunk& chunk)
 
         if (remainder_->payloadSize < remainder_max_size_)
         {
-            LOG(DEBUG, LOG_TAG) << "not enough data to encode (" << remainder_->payloadSize << " of " << remainder_max_size_ << " bytes)"
-                                << "\n";
+            LOG(DEBUG, LOG_TAG) << "not enough data to encode (" << remainder_->payloadSize << " of " << remainder_max_size_ << " bytes)" << "\n";
             return;
         }
         encode(out->format, remainder_->payload, remainder_->payloadSize);
@@ -242,7 +245,7 @@ void OpusEncoder::encode(const SampleFormat& format, const char* data, size_t si
     if (encoded_.size() < size)
         encoded_.resize(size);
 
-    opus_int32 len = opus_encode(enc_, (opus_int16*)data, samples_per_channel, encoded_.data(), size);
+    opus_int32 len = opus_encode(enc_, reinterpret_cast<const opus_int16*>(data), samples_per_channel, encoded_.data(), size);
     LOG(TRACE, LOG_TAG) << "Encode " << samples_per_channel << " frames, size " << size << " bytes, encoded: " << len << " bytes" << '\n';
 
     if (len > 0)

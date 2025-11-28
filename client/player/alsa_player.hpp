@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2020  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,14 +16,20 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef ALSA_PLAYER_HPP
-#define ALSA_PLAYER_HPP
+#pragma once
 
+// local headers
 #include "player.hpp"
 
+// 3rd party headers
 #include <alsa/asoundlib.h>
+#include <boost/asio/posix/stream_descriptor.hpp>
+#include <boost/asio/steady_timer.hpp>
+
+// standard headers
 #include <chrono>
 #include <optional>
+#include <vector>
 
 
 namespace player
@@ -38,7 +44,9 @@ static constexpr auto ALSA = "alsa";
 class AlsaPlayer : public Player
 {
 public:
+    /// c'tor
     AlsaPlayer(boost::asio::io_context& io_context, const ClientSettings::Player& settings, std::shared_ptr<Stream> stream);
+    /// d'tor
     ~AlsaPlayer() override;
 
     void start() override;
@@ -62,8 +70,8 @@ private:
     void initMixer();
     void uninitMixer();
 
-    bool getHardwareVolume(double& volume, bool& muted) override;
-    void setHardwareVolume(double volume, bool muted) override;
+    bool getHardwareVolume(Volume& volume) override;
+    void setHardwareVolume(const Volume& volume) override;
 
     void waitForEvent();
 
@@ -80,7 +88,7 @@ private:
     snd_pcm_uframes_t frames_;
     boost::asio::posix::stream_descriptor sd_;
     std::chrono::time_point<std::chrono::steady_clock> last_change_;
-    std::recursive_mutex mutex_;
+    std::recursive_mutex rec_mutex_;
     boost::asio::steady_timer timer_;
 
     std::optional<std::chrono::microseconds> buffer_time_;
@@ -88,5 +96,3 @@ private:
 };
 
 } // namespace player
-
-#endif

@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,9 +16,15 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "control_session_ws.hpp"
+
+// local headers
 #include "common/aixlog.hpp"
-#include "message/pcm_chunk.hpp"
+
+// 3rd party headers
+
+// standard headers
 #include <iostream>
 
 using namespace std;
@@ -26,17 +32,28 @@ using namespace std;
 static constexpr auto LOG_TAG = "ControlSessionWS";
 
 
-ControlSessionWebsocket::ControlSessionWebsocket(ControlMessageReceiver* receiver, websocket::stream<beast::tcp_stream>&& socket)
-    : ControlSession(receiver), ws_(std::move(socket)), strand_(net::make_strand(ws_.get_executor()))
+#ifdef HAS_OPENSSL
+ControlSessionWebsocket::ControlSessionWebsocket(ControlMessageReceiver* receiver, ssl_websocket&& ssl_ws, const ServerSettings& settings)
+    : ControlSession(receiver, settings), ssl_ws_(std::move(ssl_ws)), strand_(boost::asio::make_strand(ssl_ws_->get_executor())), is_ssl_(true)
 {
-    LOG(DEBUG, LOG_TAG) << "ControlSessionWebsocket\n";
+    LOG(DEBUG, LOG_TAG) << "ControlSessionWebsocket, mode: ssl\n";
+}
+#endif
+
+ControlSessionWebsocket::ControlSessionWebsocket(ControlMessageReceiver* receiver, tcp_websocket&& tcp_ws, const ServerSettings& settings)
+    : ControlSession(receiver, settings), tcp_ws_(std::move(tcp_ws)), strand_(boost::asio::make_strand(tcp_ws_->get_executor())), is_ssl_(false)
+{
+#ifndef HAS_OPENSSL
+    std::ignore = is_ssl_;
+#endif
+    LOG(DEBUG, LOG_TAG) << "ControlSessionWebsocket, mode: tcp\n";
 }
 
 
 ControlSessionWebsocket::~ControlSessionWebsocket()
 {
     LOG(DEBUG, LOG_TAG) << "ControlSessionWebsocket::~ControlSessionWebsocket()\n";
-    stop();
+    stop(); // NOLINT
 }
 
 
@@ -61,7 +78,8 @@ void ControlSessionWebsocket::stop()
 
 void ControlSessionWebsocket::sendAsync(const std::string& message)
 {
-    net::post(strand_, [this, self = shared_from_this(), msg = message]() {
+    boost::asio::post(strand_, [this, self = shared_from_this(), msg = message]() mutable
+    {
         messages_.push_back(std::move(msg));
         if (messages_.size() > 1)
         {
@@ -76,7 +94,9 @@ void ControlSessionWebsocket::sendAsync(const std::string& message)
 void ControlSessionWebsocket::send_next()
 {
     const std::string& message = messages_.front();
-    ws_.async_write(boost::asio::buffer(message), [this, self = shared_from_this()](std::error_code ec, std::size_t length) {
+
+    auto write_handler = [this, self = shared_from_this()](std::error_code ec, std::size_t length)
+    {
         messages_.pop_front();
         if (ec)
         {
@@ -88,21 +108,41 @@ void ControlSessionWebsocket::send_next()
         }
         if (!messages_.empty())
             send_next();
-    });
+    };
+
+#ifdef HAS_OPENSSL
+    if (is_ssl_)
+    {
+        ssl_ws_->async_write(boost::asio::buffer(message), [write_handler](std::error_code ec, std::size_t length) { write_handler(ec, length); });
+    }
+    else
+#endif
+    {
+        tcp_ws_->async_write(boost::asio::buffer(message), [write_handler](std::error_code ec, std::size_t length) { write_handler(ec, length); });
+    }
 }
 
 
 void ControlSessionWebsocket::do_read_ws()
 {
     // Read a message into our buffer
-    ws_.async_read(buffer_, [this, self = shared_from_this()](beast::error_code ec, std::size_t bytes_transferred) { on_read_ws(ec, bytes_transferred); });
+#ifdef HAS_OPENSSL
+    if (is_ssl_)
+    {
+        ssl_ws_->async_read(buffer_,
+                            [this, self = shared_from_this()](beast::error_code ec, std::size_t bytes_transferred) { on_read_ws(ec, bytes_transferred); });
+    }
+    else
+#endif
+    {
+        tcp_ws_->async_read(buffer_,
+                            [this, self = shared_from_this()](beast::error_code ec, std::size_t bytes_transferred) { on_read_ws(ec, bytes_transferred); });
+    }
 }
 
 
 void ControlSessionWebsocket::on_read_ws(beast::error_code ec, std::size_t bytes_transferred)
 {
-    boost::ignore_unused(bytes_transferred);
-
     // This indicates that the session was closed
     if (ec == websocket::error::closed)
         return;
@@ -117,9 +157,10 @@ void ControlSessionWebsocket::on_read_ws(beast::error_code ec, std::size_t bytes
     if (!line.empty())
     {
         // LOG(DEBUG, LOG_TAG) << "received: " << line << "\n";
-        if ((message_receiver_ != nullptr) && !line.empty())
+        if (message_receiver_ != nullptr)
         {
-            message_receiver_->onMessageReceived(shared_from_this(), line, [this](const std::string& response) {
+            message_receiver_->onMessageReceived(shared_from_this(), line, [this](const std::string& response)
+            {
                 if (!response.empty())
                 {
                     sendAsync(response);

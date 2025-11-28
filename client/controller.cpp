@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,7 +20,11 @@
 #define NOMINMAX
 #endif // NOMINMAX
 
+// prototype/interface header file
 #include "controller.hpp"
+
+// local headers
+#include "decoder/null_decoder.hpp"
 #include "decoder/pcm_decoder.hpp"
 #if defined(HAS_OGG) && (defined(HAS_TREMOR) || defined(HAS_VORBIS))
 #include "decoder/ogg_decoder.hpp"
@@ -50,16 +54,24 @@
 #ifdef HAS_WASAPI
 #include "player/wasapi_player.hpp"
 #endif
+#ifdef HAS_PIPEWIRE
+#include "player/pipewire_player.hpp"
+#endif
 #include "player/file_player.hpp"
 
-#include "browseZeroConf/browse_mdns.hpp"
+#include "browseZeroConf/browse_zeroconf.hpp"
 #include "common/aixlog.hpp"
+#include "common/message/client_info.hpp"
+#include "common/message/error.hpp"
+#include "common/message/factory.hpp"
+#include "common/message/hello.hpp"
+#include "common/message/message.hpp"
+#include "common/message/server_settings.hpp"
+#include "common/message/time.hpp"
 #include "common/snap_exception.hpp"
-#include "message/client_info.hpp"
-#include "message/hello.hpp"
-#include "message/time.hpp"
 #include "time_provider.hpp"
 
+// standard headers
 #include <algorithm>
 #include <iostream>
 #include <memory>
@@ -71,13 +83,56 @@ using namespace player;
 static constexpr auto LOG_TAG = "Controller";
 static constexpr auto TIME_SYNC_INTERVAL = 1s;
 
-Controller::Controller(boost::asio::io_context& io_context, const ClientSettings& settings) //, std::unique_ptr<MetadataAdapter> meta)
-    : io_context_(io_context), timer_(io_context), settings_(settings), stream_(nullptr), decoder_(nullptr), player_(nullptr),
-      serverSettings_(nullptr) // meta_(std::move(meta)),
+Controller::Controller(boost::asio::io_context& io_context, const ClientSettings& settings)
+    : io_context_(io_context),
+#ifdef HAS_OPENSSL
+      ssl_context_(boost::asio::ssl::context::tlsv12_client),
+#endif
+      timer_(io_context), settings_(settings), stream_(nullptr), decoder_(nullptr), player_(nullptr), serverSettings_(nullptr)
 {
+#ifdef HAS_OPENSSL
+    if (settings.server.isSsl())
+    {
+        boost::system::error_code ec;
+        if (settings.server.server_certificate.has_value())
+        {
+            LOG(DEBUG, LOG_TAG) << "Loading server certificate\n";
+            ssl_context_.set_default_verify_paths(ec);
+            if (ec.failed())
+                LOG(WARNING, LOG_TAG) << "Failed to load system certificates: " << ec << "\n";
+            if (!settings.server.server_certificate->empty())
+            {
+                ssl_context_.load_verify_file(settings.server.server_certificate.value().string(), ec);
+                if (ec.failed())
+                    throw SnapException("Failed to load server certificate: " + settings.server.server_certificate.value().string() + ": " + ec.message());
+            }
+        }
+
+        if (!settings.server.certificate.empty() && !settings.server.certificate_key.empty())
+        {
+            if (!settings.server.key_password.empty())
+            {
+                ssl_context_.set_password_callback(
+                    [pw = settings.server.key_password](size_t max_length, boost::asio::ssl::context_base::password_purpose purpose) -> string
+                {
+                    LOG(DEBUG, LOG_TAG) << "getPassword, purpose: " << purpose << ", max length: " << max_length << "\n";
+                    return pw;
+                });
+            }
+            LOG(DEBUG, LOG_TAG) << "Loading certificate file: " << settings.server.certificate << "\n";
+            ssl_context_.use_certificate_chain_file(settings.server.certificate.string(), ec);
+            if (ec.failed())
+                throw SnapException("Failed to load certificate: " + settings.server.certificate.string() + ": " + ec.message());
+            LOG(DEBUG, LOG_TAG) << "Loading certificate key file: " << settings.server.certificate_key << "\n";
+            ssl_context_.use_private_key_file(settings.server.certificate_key.string(), boost::asio::ssl::context::pem, ec);
+            if (ec.failed())
+                throw SnapException("Failed to load private key file: " + settings.server.certificate_key.string() + ": " + ec.message());
+        }
+    }
+#endif // HAS_OPENSSL
 }
 
-
+/// Helper to create a player instance
 template <typename PlayerType>
 std::unique_ptr<Player> Controller::createPlayer(ClientSettings::Player& settings, const std::string& player_name)
 {
@@ -110,6 +165,9 @@ std::vector<std::string> Controller::getSupportedPlayerNames()
 #ifdef HAS_WASAPI
     result.emplace_back(player::WASAPI);
 #endif
+#ifdef HAS_PIPEWIRE
+    result.emplace_back(player::PIPEWIRE);
+#endif
     result.emplace_back(player::FILE);
     return result;
 }
@@ -117,9 +175,11 @@ std::vector<std::string> Controller::getSupportedPlayerNames()
 
 void Controller::getNextMessage()
 {
-    clientConnection_->getNextMessage([this](const boost::system::error_code& ec, std::unique_ptr<msg::BaseMessage> response) {
+    clientConnection_->getNextMessage([this](const boost::system::error_code& ec, std::unique_ptr<msg::BaseMessage> response)
+    {
         if (ec)
         {
+            LOG(ERROR, LOG_TAG) << "Error receiving next message: " << ec << "\n";
             reconnect();
             return;
         }
@@ -154,7 +214,7 @@ void Controller::getNextMessage()
                                << ", volume: " << serverSettings_->getVolume() << ", muted: " << serverSettings_->isMuted() << "\n";
             if (stream_ && player_)
             {
-                player_->setVolume(serverSettings_->getVolume() / 100., serverSettings_->isMuted());
+                player_->setVolume({serverSettings_->getVolume() / 100., serverSettings_->isMuted()});
                 stream_->setBufferLen(std::max(0, serverSettings_->getBufferMs() - serverSettings_->getLatency() - settings_.player.latency));
             }
         }
@@ -179,6 +239,8 @@ void Controller::getNextMessage()
             else if (headerChunk_->codec == "opus")
                 decoder_ = make_unique<decoder::OpusDecoder>();
 #endif
+            else if (headerChunk_->codec == "null")
+                decoder_ = make_unique<decoder::NullDecoder>();
             else
                 throw SnapException("codec not supported: \"" + headerChunk_->codec + "\"");
 
@@ -212,23 +274,28 @@ void Controller::getNextMessage()
             if (!player_)
                 player_ = createPlayer<WASAPIPlayer>(settings_.player, player::WASAPI);
 #endif
+#ifdef HAS_PIPEWIRE
+            if (!player_)
+                player_ = createPlayer<PipeWirePlayer>(settings_.player, player::PIPEWIRE);
+#endif
             if (!player_ && (settings_.player.player_name == player::FILE))
                 player_ = createPlayer<FilePlayer>(settings_.player, player::FILE);
 
             if (!player_)
                 throw SnapException("No audio player support" + (settings_.player.player_name.empty() ? "" : " for: " + settings_.player.player_name));
 
-            player_->setVolumeCallback([this](double volume, bool muted) {
-                static double last_volume(-1);
-                static bool last_muted(true);
-                if ((volume != last_volume) || (last_muted != muted))
+            player_->setVolumeCallback([this](const Player::Volume& volume)
+            {
+                // Cache the last volume and check if it really changed in the player's volume callback
+                static Player::Volume last_volume{-1, true};
+                if (volume != last_volume)
                 {
                     last_volume = volume;
-                    last_muted = muted;
                     auto info = std::make_shared<msg::ClientInfo>();
-                    info->setVolume(static_cast<uint16_t>(volume * 100.));
-                    info->setMuted(muted);
-                    clientConnection_->send(info, [this](const boost::system::error_code& ec) {
+                    info->setVolume(static_cast<uint16_t>(volume.volume * 100.));
+                    info->setMuted(volume.mute);
+                    clientConnection_->send(info, [this](const boost::system::error_code& ec)
+                    {
                         if (ec)
                         {
                             LOG(ERROR, LOG_TAG) << "Failed to send client info, error: " << ec.message() << "\n";
@@ -243,17 +310,14 @@ void Controller::getNextMessage()
             // The player class will send the device's volume to the server instead
             // if (settings_.player.mixer.mode != ClientSettings::Mixer::Mode::hardware)
             // {
-            player_->setVolume(serverSettings_->getVolume() / 100., serverSettings_->isMuted());
+            player_->setVolume({serverSettings_->getVolume() / 100., serverSettings_->isMuted()});
             // }
         }
-        // else if (response->type == message_type::kStreamTags)
-        // {
-        //     if (meta_)
-        //     {
-        //         auto stream_tags = msg::message_cast<msg::StreamTags>(std::move(response));
-        //         meta_->push(stream_tags->msg);
-        //     }
-        // }
+        else if (response->type == message_type::kError)
+        {
+            auto error = msg::message_cast<msg::Error>(std::move(response));
+            LOG(ERROR, LOG_TAG) << "Received error: " << error->error << ", message: " << error->message << ", code: " << error->code << "\n";
+        }
         else
         {
             LOG(WARNING, LOG_TAG) << "Unexpected message received, type: " << response->type << "\n";
@@ -266,45 +330,47 @@ void Controller::getNextMessage()
 void Controller::sendTimeSyncMessage(int quick_syncs)
 {
     auto timeReq = std::make_shared<msg::Time>();
-    clientConnection_->sendRequest<msg::Time>(
-        timeReq, 2s, [this, quick_syncs](const boost::system::error_code& ec, const std::unique_ptr<msg::Time>& response) mutable {
-            if (ec)
-            {
-                LOG(ERROR, LOG_TAG) << "Time sync request failed: " << ec.message() << "\n";
-                reconnect();
-                return;
-            }
-            else
-            {
-                TimeProvider::getInstance().setDiff(response->latency, response->received - response->sent);
-            }
+    clientConnection_->sendRequest<msg::Time>(timeReq, 2s,
+                                              [this, quick_syncs](const boost::system::error_code& ec, const std::unique_ptr<msg::Time>& response) mutable
+    {
+        if (ec)
+        {
+            LOG(ERROR, LOG_TAG) << "Time sync request failed: " << ec.message() << "\n";
+            reconnect();
+            return;
+        }
+        else
+        {
+            TimeProvider::getInstance().setDiff(response->latency, response->received - response->sent);
+        }
 
-            std::chrono::microseconds next = TIME_SYNC_INTERVAL;
-            if (quick_syncs > 0)
+        std::chrono::microseconds next = TIME_SYNC_INTERVAL;
+        if (quick_syncs > 0)
+        {
+            if (--quick_syncs == 0)
+                LOG(INFO, LOG_TAG) << "diff to server [ms]: "
+                                   << static_cast<float>(TimeProvider::getInstance().getDiffToServer<chronos::usec>().count()) / 1000.f << "\n";
+            next = 100us;
+        }
+        timer_.expires_after(next);
+        timer_.async_wait([this, quick_syncs](const boost::system::error_code& ec)
+        {
+            if (!ec)
             {
-                if (--quick_syncs == 0)
-                    LOG(INFO, LOG_TAG) << "diff to server [ms]: "
-                                       << static_cast<float>(TimeProvider::getInstance().getDiffToServer<chronos::usec>().count()) / 1000.f << "\n";
-                next = 100us;
+                sendTimeSyncMessage(quick_syncs);
             }
-            timer_.expires_after(next);
-            timer_.async_wait([this, quick_syncs](const boost::system::error_code& ec) {
-                if (!ec)
-                {
-                    sendTimeSyncMessage(quick_syncs);
-                }
-            });
         });
+    });
 }
 
 void Controller::browseMdns(const MdnsHandler& handler)
 {
-#if defined(HAS_AVAHI) || defined(HAS_BONJOUR)
+#ifdef HAS_MDNS
     try
     {
         BrowseZeroConf browser;
         mDNSResult avahiResult;
-        if (browser.browse("_snapcast._tcp", avahiResult, 1000))
+        if (browser.browse(settings_.server.uri.host, avahiResult, 1000))
         {
             string host = avahiResult.ip;
             uint16_t port = avahiResult.port;
@@ -316,11 +382,12 @@ void Controller::browseMdns(const MdnsHandler& handler)
     }
     catch (const std::exception& e)
     {
-        LOG(ERROR, LOG_TAG) << "Exception: " << e.what() << std::endl;
+        LOG(ERROR, LOG_TAG) << "Exception: " << e.what() << "\n";
     }
 
     timer_.expires_after(500ms);
-    timer_.async_wait([this, handler](const boost::system::error_code& ec) {
+    timer_.async_wait([this, handler](const boost::system::error_code& ec)
+    {
         if (!ec)
         {
             browseMdns(handler);
@@ -337,27 +404,40 @@ void Controller::browseMdns(const MdnsHandler& handler)
 
 void Controller::start()
 {
-    if (settings_.server.host.empty())
+    auto connect = [&]()
     {
-        browseMdns([this](const boost::system::error_code& ec, const std::string& host, uint16_t port) {
+        if (settings_.server.uri.scheme == "ws")
+            clientConnection_ = make_unique<ClientConnectionWs>(io_context_, settings_.server);
+#ifdef HAS_OPENSSL
+        else if (settings_.server.uri.scheme == "wss")
+            clientConnection_ = make_unique<ClientConnectionWss>(io_context_, ssl_context_, settings_.server);
+#endif
+        else
+            clientConnection_ = make_unique<ClientConnectionTcp>(io_context_, settings_.server);
+        worker();
+    };
+
+    // mDNS service names start (unlike host names) with "_"
+    if (settings_.server.uri.host.empty() || (settings_.server.uri.host[0] == '_'))
+    {
+        browseMdns([this, connect = std::move(connect)](const boost::system::error_code& ec, const std::string& host, uint16_t port)
+        {
             if (ec)
             {
                 LOG(ERROR, LOG_TAG) << "Failed to browse MDNS, error: " << ec.message() << "\n";
             }
             else
             {
-                settings_.server.host = host;
-                settings_.server.port = port;
-                LOG(INFO, LOG_TAG) << "Found server " << settings_.server.host << ":" << settings_.server.port << "\n";
-                clientConnection_ = make_unique<ClientConnection>(io_context_, settings_.server);
-                worker();
+                settings_.server.uri.host = host;
+                settings_.server.uri.port = port;
+                LOG(INFO, LOG_TAG) << "Found server " << settings_.server.uri.host << ":" << settings_.server.uri.port.value() << "\n";
+                connect();
             }
         });
     }
     else
     {
-        clientConnection_ = make_unique<ClientConnection>(io_context_, settings_.server);
-        worker();
+        connect();
     }
 }
 
@@ -370,13 +450,15 @@ void Controller::start()
 
 void Controller::reconnect()
 {
+    LOG(INFO, LOG_TAG) << "Reconnecting\n";
     timer_.cancel();
     clientConnection_->disconnect();
     player_.reset();
     stream_.reset();
     decoder_.reset();
     timer_.expires_after(1s);
-    timer_.async_wait([this](const boost::system::error_code& ec) {
+    timer_.async_wait([this](const boost::system::error_code& ec)
+    {
         if (!ec)
         {
             worker();
@@ -386,7 +468,8 @@ void Controller::reconnect()
 
 void Controller::worker()
 {
-    clientConnection_->connect([this](const boost::system::error_code& ec) {
+    clientConnection_->connect([this](const boost::system::error_code& ec)
+    {
         if (!ec)
         {
             // LOG(INFO, LOG_TAG) << "Connected!\n";
@@ -394,28 +477,47 @@ void Controller::worker()
             if (settings_.host_id.empty())
                 settings_.host_id = ::getHostId(macAddress);
 
+            // Start receiver loop
+            getNextMessage();
+
             // Say hello to the server
-            auto hello = std::make_shared<msg::Hello>(macAddress, settings_.host_id, settings_.instance);
-            clientConnection_->sendRequest<msg::ServerSettings>(
-                hello, 2s, [this](const boost::system::error_code& ec, std::unique_ptr<msg::ServerSettings> response) mutable {
-                    if (ec)
+            std::optional<msg::Hello::Auth> auth;
+            if (settings_.server.auth.has_value())
+                auth = msg::Hello::Auth{settings_.server.auth->scheme, settings_.server.auth->param};
+            auto hello = std::make_shared<msg::Hello>(macAddress, settings_.host_id, settings_.instance, auth);
+            clientConnection_->sendRequest(hello, 2s, [this](const boost::system::error_code& ec, std::unique_ptr<msg::BaseMessage> response) mutable
+            {
+                if (ec)
+                {
+                    LOG(ERROR, LOG_TAG) << "Failed to send hello request, error: " << ec.message() << "\n";
+                    reconnect();
+                    return;
+                }
+                else
+                {
+                    if (response->type == message_type::kError)
                     {
-                        LOG(ERROR, LOG_TAG) << "Failed to send hello request, error: " << ec.message() << "\n";
+                        auto error_msg = msg::message_cast<msg::Error>(std::move(response));
+                        LOG(ERROR, LOG_TAG) << "Received error repsonse to hello request: " << error_msg->error << ", code: " << error_msg->code
+                                            << ", message: " << error_msg->message << "\n";
+                        // reconnect();
+                        return;
+                    }
+                    else if (response->type != message_type::kServerSettings)
+                    {
+                        LOG(ERROR, LOG_TAG) << "Received unexpected message type as repsonse to hello request: " << response->type << "\n";
                         reconnect();
                         return;
                     }
-                    else
-                    {
-                        serverSettings_ = std::move(response);
-                        LOG(INFO, LOG_TAG) << "ServerSettings - buffer: " << serverSettings_->getBufferMs() << ", latency: " << serverSettings_->getLatency()
-                                           << ", volume: " << serverSettings_->getVolume() << ", muted: " << serverSettings_->isMuted() << "\n";
-                    }
-                });
 
-            // Do initial time sync with the server
-            sendTimeSyncMessage(50);
-            // Start receiver loop
-            getNextMessage();
+                    serverSettings_ = msg::message_cast<msg::ServerSettings>(std::move(response));
+                    LOG(INFO, LOG_TAG) << "ServerSettings - buffer: " << serverSettings_->getBufferMs() << ", latency: " << serverSettings_->getLatency()
+                                       << ", volume: " << serverSettings_->getVolume() << ", muted: " << serverSettings_->isMuted() << "\n";
+
+                    // Do initial time sync with the server
+                    sendTimeSyncMessage(50);
+                }
+            });
         }
         else
         {

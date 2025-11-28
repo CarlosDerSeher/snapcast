@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,8 +16,8 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef STREAM_MANAGER_HPP
-#define STREAM_MANAGER_HPP
+#pragma once
+
 
 // local headers
 #include "pcm_stream.hpp"
@@ -34,30 +34,44 @@
 namespace streamreader
 {
 
+/// Shared pointer to a stream object
 using PcmStreamPtr = std::shared_ptr<PcmStream>;
 
+/// Manage all available stream sources
 class StreamManager
 {
 public:
-    StreamManager(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& settings);
+    /// C'tor
+    StreamManager(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, ServerSettings settings);
 
-    PcmStreamPtr addStream(const std::string& uri);
-    PcmStreamPtr addStream(StreamUri& streamUri);
+    /// Construct and add a stream from @p uri, added from @p source
+    /// @return the created stream
+    PcmStreamPtr addStream(const std::string& uri, PcmStream::Source source);
+    /// Construct and add a stream from @p streamUri, added from @p source
+    /// @return the created stream
+    PcmStreamPtr addStream(StreamUri& streamUri, PcmStream::Source source);
+    /// Remove a stream by @p name
     void removeStream(const std::string& name);
+
+    /// Start all stream sources, i.e the streams sources will start reading their respective inputs
     void start();
+    /// Stop all stream sources
     void stop();
-    const std::vector<PcmStreamPtr>& getStreams();
-    const PcmStreamPtr getDefaultStream();
-    const PcmStreamPtr getStream(const std::string& id);
+
+    /// @return list of all available streams
+    const std::vector<PcmStreamPtr>& getStreams() const;
+    /// @return default stream for groups that don't have a stream source configured
+    const PcmStreamPtr getDefaultStream() const;
+    /// @return stream by id (id is an alias for name)
+    const PcmStreamPtr getStream(const std::string& id) const;
+    /// @return all streams with details as json
     json toJson() const;
 
 private:
     std::vector<PcmStreamPtr> streams_;
     PcmStream::Listener* pcmListener_;
     ServerSettings settings_;
-    boost::asio::io_context& ioc_;
+    boost::asio::io_context& io_context_;
 };
 
 } // namespace streamreader
-
-#endif

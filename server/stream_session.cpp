@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,11 +16,17 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "stream_session.hpp"
 
+// local headers
 #include "common/aixlog.hpp"
-#include "message/pcm_chunk.hpp"
+
+// 3rd party headers
+
+// standard headers
 #include <iostream>
+
 
 using namespace std;
 using namespace streamreader;
@@ -28,8 +34,8 @@ using namespace streamreader;
 static constexpr auto LOG_TAG = "StreamSession";
 
 
-StreamSession::StreamSession(const net::any_io_executor& executor, StreamMessageReceiver* receiver)
-    : messageReceiver_(receiver), pcmStream_(nullptr), strand_(net::make_strand(executor))
+StreamSession::StreamSession(const boost::asio::any_io_executor& executor, const ServerSettings& server_settings, StreamMessageReceiver* receiver)
+    : authinfo(server_settings.auth), messageReceiver_(receiver), pcm_stream_(nullptr), strand_(boost::asio::make_strand(executor))
 {
     base_msg_size_ = baseMessage_.getSize();
     buffer_.resize(base_msg_size_);
@@ -39,23 +45,29 @@ StreamSession::StreamSession(const net::any_io_executor& executor, StreamMessage
 void StreamSession::setPcmStream(PcmStreamPtr pcmStream)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    pcmStream_ = pcmStream;
+    pcm_stream_ = std::move(pcmStream);
 }
 
 
 const PcmStreamPtr StreamSession::pcmStream() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return pcmStream_;
+    return pcm_stream_;
 }
 
 
-void StreamSession::send_next()
+void StreamSession::sendNext()
 {
     auto& buffer = messages_.front();
     buffer.on_air = true;
-    net::post(strand_, [this, self = shared_from_this(), buffer]() {
-        sendAsync(buffer, [this](boost::system::error_code ec, std::size_t length) {
+    boost::asio::post(strand_, [this, self = shared_from_this(), buffer]()
+    {
+        sendAsync(buffer, [this, buffer](boost::system::error_code ec, std::size_t length)
+        {
+            auto write_handler = buffer.getWriteHandler();
+            if (write_handler)
+                write_handler(ec, length);
+
             messages_.pop_front();
             if (ec)
             {
@@ -64,45 +76,48 @@ void StreamSession::send_next()
                 return;
             }
             if (!messages_.empty())
-                send_next();
+                sendNext();
         });
     });
 }
 
 
-void StreamSession::send(shared_const_buffer const_buf)
+void StreamSession::send(shared_const_buffer const_buf, WriteHandler&& handler)
 {
-    net::post(strand_, [this, self = shared_from_this(), const_buf]() {
+    boost::asio::post(strand_, [this, self = shared_from_this(), const_buf = std::move(const_buf), handler = std::move(handler)]() mutable
+    {
         // delete PCM chunks that are older than the overall buffer duration
         messages_.erase(std::remove_if(messages_.begin(), messages_.end(),
-                                       [this](const shared_const_buffer& buffer) {
-                                           const auto& msg = buffer.message();
-                                           if (!msg.is_pcm_chunk || buffer.on_air)
-                                               return false;
-                                           auto age = chronos::clk::now() - msg.rec_time;
-                                           return (age > std::chrono::milliseconds(bufferMs_) + 100ms);
-                                       }),
+                                       [this](const shared_const_buffer& buffer)
+        {
+            const auto& msg = buffer.message();
+            if (!msg.is_pcm_chunk || buffer.on_air)
+                return false;
+            auto age = chronos::clk::now() - msg.rec_time;
+            return (age > std::chrono::milliseconds(bufferMs_) + 100ms);
+        }),
                         messages_.end());
 
-        messages_.push_back(const_buf);
+        const_buf.setWriteHandler(std::move(handler));
+        messages_.push_back(std::move(const_buf));
 
         if (messages_.size() > 1)
         {
             LOG(TRACE, LOG_TAG) << "outstanding async_write\n";
             return;
         }
-        send_next();
+        sendNext();
     });
 }
 
 
-void StreamSession::send(msg::message_ptr message)
+void StreamSession::send(const msg::message_ptr& message, WriteHandler&& handler)
 {
     if (!message)
         return;
 
     // TODO: better set the timestamp in send_next for more accurate time sync
-    send(shared_const_buffer(*message));
+    send(shared_const_buffer(*message), std::move(handler));
 }
 
 

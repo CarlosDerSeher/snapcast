@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,10 +16,17 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "stream_session_tcp.hpp"
 
+// local headers
 #include "common/aixlog.hpp"
-#include "message/pcm_chunk.hpp"
+
+// 3rd party headers
+#include <boost/asio/read.hpp>
+#include <boost/asio/write.hpp>
+
+// standard headers
 #include <iostream>
 
 using namespace std;
@@ -29,8 +36,8 @@ using namespace streamreader;
 static constexpr auto LOG_TAG = "StreamSessionTCP";
 
 
-StreamSessionTcp::StreamSessionTcp(StreamMessageReceiver* receiver, tcp::socket&& socket)
-    : StreamSession(socket.get_executor(), receiver), socket_(std::move(socket))
+StreamSessionTcp::StreamSessionTcp(StreamMessageReceiver* receiver, const ServerSettings& server_settings, tcp::socket&& socket)
+    : StreamSession(socket.get_executor(), server_settings, receiver), socket_(std::move(socket))
 {
 }
 
@@ -38,13 +45,13 @@ StreamSessionTcp::StreamSessionTcp(StreamMessageReceiver* receiver, tcp::socket&
 StreamSessionTcp::~StreamSessionTcp()
 {
     LOG(DEBUG, LOG_TAG) << "~StreamSessionTcp\n";
-    stop();
+    stop(); // NOLINT
 }
 
 
 void StreamSessionTcp::start()
 {
-    read_next();
+    readNext();
 }
 
 
@@ -78,57 +85,62 @@ std::string StreamSessionTcp::getIP()
 }
 
 
-void StreamSessionTcp::read_next()
+void StreamSessionTcp::readNext()
 {
-    boost::asio::async_read(
-        socket_, boost::asio::buffer(buffer_, base_msg_size_), [this, self = shared_from_this()](boost::system::error_code ec, std::size_t length) mutable {
+    boost::asio::async_read(socket_, boost::asio::buffer(buffer_, base_msg_size_),
+                            [this, self = shared_from_this()](boost::system::error_code ec, std::size_t length) mutable
+    {
+        if (ec)
+        {
+            LOG(ERROR, LOG_TAG) << "Error reading message header of length " << length << ": " << ec.message() << "\n";
+            messageReceiver_->onDisconnect(this);
+            return;
+        }
+
+        baseMessage_.deserialize(buffer_.data());
+        LOG(DEBUG, LOG_TAG) << "getNextMessage: " << baseMessage_.type << ", size: " << baseMessage_.size << ", id: " << baseMessage_.id
+                            << ", refers: " << baseMessage_.refersTo << "\n";
+        if (baseMessage_.type > message_type::kLast)
+        {
+            LOG(ERROR, LOG_TAG) << "unknown message type received: " << baseMessage_.type << ", size: " << baseMessage_.size << "\n";
+            messageReceiver_->onDisconnect(this);
+            return;
+        }
+        else if (baseMessage_.size > msg::max_size)
+        {
+            LOG(ERROR, LOG_TAG) << "received message of type " << baseMessage_.type << " to large: " << baseMessage_.size << "\n";
+            messageReceiver_->onDisconnect(this);
+            return;
+        }
+
+        if (baseMessage_.size > buffer_.size())
+            buffer_.resize(baseMessage_.size);
+
+        boost::asio::async_read(socket_, boost::asio::buffer(buffer_, baseMessage_.size), [this, self](boost::system::error_code ec, std::size_t length) mutable
+        {
             if (ec)
             {
-                LOG(ERROR, LOG_TAG) << "Error reading message header of length " << length << ": " << ec.message() << "\n";
+                LOG(ERROR, LOG_TAG) << "Error reading message body of length " << length << ": " << ec.message() << "\n";
                 messageReceiver_->onDisconnect(this);
                 return;
             }
 
-            baseMessage_.deserialize(buffer_.data());
-            LOG(DEBUG, LOG_TAG) << "getNextMessage: " << baseMessage_.type << ", size: " << baseMessage_.size << ", id: " << baseMessage_.id
-                                << ", refers: " << baseMessage_.refersTo << "\n";
-            if (baseMessage_.type > message_type::kLast)
-            {
-                LOG(ERROR, LOG_TAG) << "unknown message type received: " << baseMessage_.type << ", size: " << baseMessage_.size << "\n";
-                messageReceiver_->onDisconnect(this);
-                return;
-            }
-            else if (baseMessage_.size > msg::max_size)
-            {
-                LOG(ERROR, LOG_TAG) << "received message of type " << baseMessage_.type << " to large: " << baseMessage_.size << "\n";
-                messageReceiver_->onDisconnect(this);
-                return;
-            }
-
-            if (baseMessage_.size > buffer_.size())
-                buffer_.resize(baseMessage_.size);
-
-            boost::asio::async_read(socket_, boost::asio::buffer(buffer_, baseMessage_.size),
-                                    [this, self](boost::system::error_code ec, std::size_t length) mutable {
-                                        if (ec)
-                                        {
-                                            LOG(ERROR, LOG_TAG) << "Error reading message body of length " << length << ": " << ec.message() << "\n";
-                                            messageReceiver_->onDisconnect(this);
-                                            return;
-                                        }
-
-                                        tv t;
-                                        baseMessage_.received = t;
-                                        if (messageReceiver_ != nullptr)
-                                            messageReceiver_->onMessageReceived(this, baseMessage_, buffer_.data());
-                                        read_next();
-                                    });
+            tv now;
+            baseMessage_.received = now;
+            if (messageReceiver_ != nullptr)
+                messageReceiver_->onMessageReceived(shared_from_this(), baseMessage_, buffer_.data());
+            readNext();
         });
+    });
 }
 
 
-void StreamSessionTcp::sendAsync(const shared_const_buffer& buffer, const WriteHandler& handler)
+void StreamSessionTcp::sendAsync(const shared_const_buffer& buffer, WriteHandler&& handler)
 {
     boost::asio::async_write(socket_, buffer,
-                             [self = shared_from_this(), buffer, handler](boost::system::error_code ec, std::size_t length) { handler(ec, length); });
+                             [self = shared_from_this(), buffer, handler = std::move(handler)](boost::system::error_code ec, std::size_t length)
+    {
+        if (handler)
+            handler(ec, length);
+    });
 }

@@ -159,10 +159,10 @@ The Server JSON object contains a list of Groups and Streams. Every Group holds 
   * [Server.GetStatus](#servergetstatus)
   * [Server.DeleteClient](#serverdeleteclient)
 * Stream
-  * [Stream.AddStream](#streamaddstream)
-  * [Stream.RemoveStream](#streamremovestream)
   * [Stream.Control](#streamcontrol)
   * [Stream.SetProperty](#streamsetproperty)
+  * [Stream.AddStream](#streamaddstream)
+  * [Stream.RemoveStream](#streamremovestream)
 
 ### Notifications
 
@@ -412,34 +412,6 @@ Some requests might return more specific json error messages.
 {"jsonrpc":"2.0","method":"Server.OnUpdate","params":{"server":{"groups":[{"clients":[{"config":{"instance":2,"latency":6,"name":"123 456","volume":{"muted":false,"percent":48}},"connected":true,"host":{"arch":"x86_64","ip":"127.0.0.1","mac":"00:21:6a:7d:74:fc","name":"T400","os":"Linux Mint 17.3 Rosa"},"id":"00:21:6a:7d:74:fc#2","lastSeen":{"sec":1488025751,"usec":654777},"snapclient":{"name":"Snapclient","protocolVersion":2,"version":"0.10.0"}}],"id":"4dcc4e3b-c699-a04b-7f0c-8260d23c43e1","muted":false,"name":"","stream_id":"stream 2"}],"server":{"host":{"arch":"x86_64","ip":"","mac":"","name":"T400","os":"Linux Mint 17.3 Rosa"},"snapserver":{"controlProtocolVersion":1,"name":"Snapserver","protocolVersion":1,"version":"0.10.0"}},"streams":[{"id":"stream 1","status":"idle","uri":{"fragment":"","host":"","path":"/tmp/snapfifo","query":{"chunk_ms":"20","codec":"flac","name":"stream 1","sampleformat":"48000:16:2"},"raw":"pipe:///tmp/snapfifo?name=stream 1","scheme":"pipe"}},{"id":"stream 2","status":"idle","uri":{"fragment":"","host":"","path":"/tmp/snapfifo","query":{"chunk_ms":"20","codec":"flac","name":"stream 2","sampleformat":"48000:16:2"},"raw":"pipe:///tmp/snapfifo?name=stream 2","scheme":"pipe"}}]}}}
 ```
 
-### Stream.AddStream
-
-#### Request
-
-```json
-{"id":8,"jsonrpc":"2.0","method":"Stream.AddStream","params":{"streamUri":"pipe:///tmp/snapfifo?name=stream 2"}}
-```
-
-#### Response
-
-```json
-{"id":8,"jsonrpc":"2.0","result":{"stream_id":"stream 2"}}
-```
-
-### Stream.RemoveStream
-
-#### Request
-
-```json
-{"id":8,"jsonrpc":"2.0","method":"Stream.RemoveStream","params":{"id":"stream 2"}}
-```
-
-#### Response
-
-```json
-{"id":8,"jsonrpc":"2.0","result":{"stream_id":"stream 2"}}
-```
-
 ### Stream.Control
 
 #### Request
@@ -510,6 +482,37 @@ See [Plugin.Stream.Player.SetProperty](stream_plugin.md#pluginstreamplayersetpro
 {"id": 1, "jsonrpc": "2.0", "result": "ok"}
 ```
 
+### Stream.AddStream
+
+Note: For security purposes, the RPC interface allows only adding streams of these types: `pipe`, `file`, `tcp`, `alsa`, `jack` and `meta`.
+The optional`controlscript` of the `streamUri` must be located in `[stream] plugin_dir` (configured in `snapserver.conf`, default `/usr/share/snapserver/plug-ins`), can be an absolute or relative path.
+
+#### Request
+
+```json
+{"id":8,"jsonrpc":"2.0","method":"Stream.AddStream","params":{"streamUri":"pipe:///tmp/snapfifo?name=stream 2"}}
+```
+
+#### Response
+
+```json
+{"id":8,"jsonrpc":"2.0","result":{"stream_id":"stream 2"}}
+```
+
+### Stream.RemoveStream
+
+#### Request
+
+```json
+{"id":8,"jsonrpc":"2.0","method":"Stream.RemoveStream","params":{"id":"stream 2"}}
+```
+
+#### Response
+
+```json
+{"id":8,"jsonrpc":"2.0","result":{"stream_id":"stream 2"}}
+```
+
 ##### Error
 
 ```json
@@ -519,6 +522,7 @@ See [Plugin.Stream.Player.SetProperty](stream_plugin.md#pluginstreamplayersetpro
 {"id": 1, "jsonrpc": "2.0", "error": {"code": -32602, "message": "Value for loopStatus must be one of 'none', 'track', 'playlist'"}}
 {"id": 1, "jsonrpc": "2.0", "error": {"code": -32602, "message": "Value for shuffle must be bool"}}
 {"id": 1, "jsonrpc": "2.0", "error": {"code": -32602, "message": "Value for volume must be an int"}}
+{"id": 1, "jsonrpc": "2.0", "error": {"code": -32602, "message": "Value for mute must be bool"}}
 {"id": 1, "jsonrpc": "2.0", "error": {"code": -32602, "message": "Value for rate must be float"}}
 ```
 

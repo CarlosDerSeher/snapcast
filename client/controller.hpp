@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,23 +16,20 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef CONTROLLER_HPP
-#define CONTROLLER_HPP
+#pragma once
 
 // local headers
 #include "client_connection.hpp"
 #include "client_settings.hpp"
+#include "common/message/server_settings.hpp"
 #include "decoder/decoder.hpp"
-#include "message/message.hpp"
-#include "message/server_settings.hpp"
 #include "player/player.hpp"
 #include "stream.hpp"
 
 // 3rd party headers
 
 // standard headers
-#include <atomic>
-#include <thread>
+
 
 using namespace std::chrono_literals;
 
@@ -46,9 +43,12 @@ using namespace std::chrono_literals;
 class Controller
 {
 public:
-    Controller(boost::asio::io_context& io_context, const ClientSettings& settings); //, std::unique_ptr<MetadataAdapter> meta);
+    /// c'tor
+    Controller(boost::asio::io_context& io_context, const ClientSettings& settings);
+    /// Start thw work
     void start();
     // void stop();
+    /// @return list of supported audio backends
     static std::vector<std::string> getSupportedPlayerNames();
 
 private:
@@ -64,6 +64,9 @@ private:
     void sendTimeSyncMessage(int quick_syncs);
 
     boost::asio::io_context& io_context_;
+#ifdef HAS_OPENSSL
+    boost::asio::ssl::context ssl_context_;
+#endif
     boost::asio::steady_timer timer_;
     ClientSettings settings_;
     SampleFormat sampleFormat_;
@@ -71,10 +74,6 @@ private:
     std::shared_ptr<Stream> stream_;
     std::unique_ptr<decoder::Decoder> decoder_;
     std::unique_ptr<player::Player> player_;
-    // std::unique_ptr<MetadataAdapter> meta_;
     std::unique_ptr<msg::ServerSettings> serverSettings_;
     std::unique_ptr<msg::CodecHeader> headerChunk_;
 };
-
-
-#endif

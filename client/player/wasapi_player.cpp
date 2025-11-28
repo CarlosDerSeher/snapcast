@@ -1,20 +1,42 @@
+/***
+    This file is part of snapcast
+    Copyright (C) 2014-2025  Johannes Pohl
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+***/
+
+// prototype/interface header file
 #include "wasapi_player.hpp"
-#include <initguid.h>
-#include <mmdeviceapi.h>
-//#include <functiondiscoverykeys_devpkey.h>
+
+// local headers
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
-#include <assert.h>
+
+// 3rd party headers
+#include <initguid.h>
+#include <mmdeviceapi.h>
+
+// standard headers
 #include <audioclient.h>
 #include <avrt.h>
-#include <chrono>
-#include <codecvt>
 #include <comdef.h>
 #include <comip.h>
-#include <functional>
 #include <ksmedia.h>
-#include <locale>
 #include <mmdeviceapi.h>
+
+#include <cassert>
+
 
 using namespace std;
 using namespace std::chrono;
@@ -25,9 +47,11 @@ namespace player
 
 static constexpr auto LOG_TAG = "WASAPI";
 
+/// COMMemDeleter helper
 template <typename T>
 struct COMMemDeleter
 {
+    /// Operator()
     void operator()(T* obj)
     {
         if (obj != NULL)
@@ -67,7 +91,7 @@ EXTERN_C const PROPERTYKEY DECLSPEC_SELECTANY PKEY_Device_FriendlyName = {{0xa45
     if (FAILED(hres))                                                                                                                                          \
     {                                                                                                                                                          \
         stringstream ss;                                                                                                                                       \
-        ss << "HRESULT fault status: " << hex << (hres) << " line " << dec << __LINE__ << endl;                                                                \
+        ss << "HRESULT fault status: " << hex << (hres) << " line " << dec << __LINE__ << "\n";                                                                \
         LOG(FATAL, LOG_TAG) << ss.str();                                                                                                                       \
         throw SnapException(ss.str());                                                                                                                         \
     }
@@ -108,7 +132,8 @@ inline PcmDevice convertToDevice(int idx, IMMDevicePtr& device)
     desc.idx = idx;
 
     // Convert a wide Unicode string to an UTF8 string
-    auto utf8_encode = [](const std::wstring& wstr) {
+    auto utf8_encode = [](const std::wstring& wstr)
+    {
         if (wstr.empty())
             return std::string();
         int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), NULL, 0, NULL, NULL);

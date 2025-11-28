@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,11 +16,15 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "flac_decoder.hpp"
+
+// local headers
 #include "common/aixlog.hpp"
 #include "common/endian.hpp"
 #include "common/snap_exception.hpp"
-#include <cmath>
+
+// standard headers
 #include <cstring>
 #include <iostream>
 
@@ -34,11 +38,13 @@ namespace decoder
 
 namespace callback
 {
+// NOLINTBEGIN
 FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder* decoder, FLAC__byte buffer[], size_t* bytes, void* client_data);
 FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder* decoder, const FLAC__Frame* frame, const FLAC__int32* const buffer[],
                                               void* client_data);
 void metadata_callback(const FLAC__StreamDecoder* decoder, const FLAC__StreamMetadata* metadata, void* client_data);
 void error_callback(const FLAC__StreamDecoder* decoder, FLAC__StreamDecoderErrorStatus status, void* client_data);
+// NOLINTEND
 } // namespace callback
 
 namespace
@@ -74,7 +80,7 @@ bool FlacDecoder::decode(msg::PcmChunk* chunk)
     memcpy(flacChunk->payload, chunk->payload, chunk->payloadSize);
     flacChunk->payloadSize = chunk->payloadSize;
 
-    pcmChunk->payload = static_cast<char*>(realloc(pcmChunk->payload, 0));
+    pcmChunk->payload = static_cast<char*>(realloc(pcmChunk->payload, 0)); // NOLINT
     pcmChunk->payloadSize = 0;
     while (flacChunk->payloadSize > 0)
     {
@@ -126,6 +132,7 @@ SampleFormat FlacDecoder::setHeader(msg::CodecHeader* chunk)
 
 namespace callback
 {
+// NOLINTNEXTLINE
 FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder* /*decoder*/, FLAC__byte buffer[], size_t* bytes, void* client_data)
 {
     if (flacHeader != nullptr)
@@ -147,12 +154,12 @@ FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder* /*decoder
         memcpy(buffer, flacChunk->payload, *bytes);
         memmove(flacChunk->payload, flacChunk->payload + *bytes, flacChunk->payloadSize - *bytes);
         flacChunk->payloadSize = flacChunk->payloadSize - static_cast<uint32_t>(*bytes);
-        flacChunk->payload = static_cast<char*>(realloc(flacChunk->payload, flacChunk->payloadSize));
+        flacChunk->payload = static_cast<char*>(realloc(flacChunk->payload, flacChunk->payloadSize)); // NOLINT
     }
     return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
 }
 
-
+// NOLINTNEXTLINE
 FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder* /*decoder*/, const FLAC__Frame* frame, const FLAC__int32* const buffer[],
                                               void* client_data)
 {

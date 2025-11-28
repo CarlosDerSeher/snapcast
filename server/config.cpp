@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,11 +16,16 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "config.hpp"
+
+// local headers
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
 #include "common/utils/file_utils.hpp"
+
+// standard headers
 #include <cerrno>
 #include <fcntl.h>
 #include <fstream>
@@ -40,12 +45,13 @@ Config::~Config()
 void Config::init(const std::string& root_directory, const std::string& user, const std::string& group)
 {
     string dir;
+    auto home = getenv("HOME");
     if (!root_directory.empty())
         dir = root_directory;
-    else if (getenv("HOME") == nullptr)
+    else if (home == nullptr)
         dir = "/var/lib/snapserver/";
     else
-        dir = string(getenv("HOME")) + "/.config/snapserver/";
+        dir = string{home} + "/.config/snapserver/";
 
     if (!dir.empty() && (dir.back() != '/'))
         dir += "/";
@@ -55,10 +61,10 @@ void Config::init(const std::string& root_directory, const std::string& user, co
 
     int status = utils::file::mkdirRecursive(dir.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
     if ((status != 0) && (errno != EEXIST))
-        throw SnapException("failed to create settings directory: \"" + dir + "\": " + cpt::to_string(errno));
+        throw SnapException("failed to create persistent settings directory: \"" + dir + "\": " + cpt::to_string(errno));
 
     filename_ = dir + "server.json";
-    LOG(NOTICE) << "Settings file: \"" << filename_ << "\"\n";
+    LOG(DEBUG) << "Internal persistent settings file: \"" << filename_ << "\"\n";
 
     int fd;
     if ((fd = open(filename_.c_str(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) == -1)
@@ -124,9 +130,9 @@ void Config::save()
 }
 
 
-ClientInfoPtr Config::getClientInfo(const std::string& clientId) const
+ClientInfoPtr Config::getClientInfo(const std::string& client_id) const
 {
-    if (clientId.empty())
+    if (client_id.empty())
         return nullptr;
 
     std::lock_guard<std::recursive_mutex> lock(mutex_);
@@ -134,7 +140,7 @@ ClientInfoPtr Config::getClientInfo(const std::string& clientId) const
     {
         for (auto client : group->clients)
         {
-            if (client->id == clientId)
+            if (client->id == client_id)
                 return client;
         }
     }
@@ -143,7 +149,7 @@ ClientInfoPtr Config::getClientInfo(const std::string& clientId) const
 }
 
 
-GroupPtr Config::addClientInfo(ClientInfoPtr client)
+GroupPtr Config::addClientInfo(const ClientInfoPtr& client)
 {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     GroupPtr group = getGroupFromClient(client);
@@ -157,22 +163,22 @@ GroupPtr Config::addClientInfo(ClientInfoPtr client)
 }
 
 
-GroupPtr Config::addClientInfo(const std::string& clientId)
+GroupPtr Config::addClientInfo(const std::string& client_id)
 {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    ClientInfoPtr client = getClientInfo(clientId);
+    ClientInfoPtr client = getClientInfo(client_id);
     if (!client)
-        client = make_shared<ClientInfo>(clientId);
+        client = make_shared<ClientInfo>(client_id);
     return addClientInfo(client);
 }
 
 
-GroupPtr Config::getGroup(const std::string& groupId) const
+GroupPtr Config::getGroup(const std::string& group_id) const
 {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     for (const auto& group : groups)
     {
-        if (group->id == groupId)
+        if (group->id == group_id)
             return group;
     }
 
@@ -180,14 +186,14 @@ GroupPtr Config::getGroup(const std::string& groupId) const
 }
 
 
-GroupPtr Config::getGroupFromClient(const std::string& clientId)
+GroupPtr Config::getGroupFromClient(const std::string& client_id)
 {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     for (const auto& group : groups)
     {
         for (const auto& c : group->clients)
         {
-            if (c->id == clientId)
+            if (c->id == client_id)
                 return group;
         }
     }
@@ -195,7 +201,7 @@ GroupPtr Config::getGroupFromClient(const std::string& clientId)
 }
 
 
-GroupPtr Config::getGroupFromClient(ClientInfoPtr client)
+GroupPtr Config::getGroupFromClient(const ClientInfoPtr& client)
 {
     return getGroupFromClient(client->id);
 }
@@ -229,7 +235,7 @@ json Config::getGroups() const
 }
 
 
-void Config::remove(ClientInfoPtr client)
+void Config::remove(const ClientInfoPtr& client)
 {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto group = getGroupFromClient(client);
@@ -241,7 +247,7 @@ void Config::remove(ClientInfoPtr client)
 }
 
 
-void Config::remove(GroupPtr group, bool force)
+void Config::remove(const GroupPtr& group, bool force)
 {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!group)

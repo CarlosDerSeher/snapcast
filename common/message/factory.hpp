@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,35 +16,32 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef MESSAGE_FACTORY_HPP
-#define MESSAGE_FACTORY_HPP
+#pragma once
 
+// local headers
 #include "client_info.hpp"
 #include "codec_header.hpp"
+#include "common/message/error.hpp"
+#include "error.hpp"
 #include "hello.hpp"
 #include "pcm_chunk.hpp"
 #include "server_settings.hpp"
-// #include "stream_tags.hpp"
 #include "time.hpp"
-
-#include "common/str_compat.hpp"
-#include "common/utils.hpp"
-#include "json_message.hpp"
-#include <string>
 
 
 namespace msg
 {
 
+/// Cast a BaseMessage @message to type "ToType"
+/// @return castest message or nullptr, if the cast failed
 template <typename ToType>
 static std::unique_ptr<ToType> message_cast(std::unique_ptr<msg::BaseMessage> message)
 {
-    ToType* tmp = dynamic_cast<ToType*>(message.get());
-    std::unique_ptr<ToType> result;
+    auto* tmp = dynamic_cast<ToType*>(message.get());
     if (tmp != nullptr)
     {
         message.release();
-        result.reset(tmp);
+        std::unique_ptr<ToType> result(tmp);
         return result;
     }
     return nullptr;
@@ -53,6 +50,7 @@ static std::unique_ptr<ToType> message_cast(std::unique_ptr<msg::BaseMessage> me
 namespace factory
 {
 
+/// Create a message of type T from @p base_message beaser and payload @p buffer
 template <typename T>
 static std::unique_ptr<T> createMessage(const BaseMessage& base_message, char* buffer)
 {
@@ -63,6 +61,7 @@ static std::unique_ptr<T> createMessage(const BaseMessage& base_message, char* b
     return result;
 }
 
+/// Create a BaseMessage from @p base_message header and payload @p buffer
 static std::unique_ptr<BaseMessage> createMessage(const BaseMessage& base_message, char* buffer)
 {
     std::unique_ptr<BaseMessage> result;
@@ -74,8 +73,6 @@ static std::unique_ptr<BaseMessage> createMessage(const BaseMessage& base_messag
             return createMessage<Hello>(base_message, buffer);
         case message_type::kServerSettings:
             return createMessage<ServerSettings>(base_message, buffer);
-        // case message_type::kStreamTags:
-        //     return createMessage<StreamTags>(base_message, buffer);
         case message_type::kTime:
             return createMessage<Time>(base_message, buffer);
         case message_type::kWireChunk:
@@ -84,6 +81,8 @@ static std::unique_ptr<BaseMessage> createMessage(const BaseMessage& base_messag
             return createMessage<PcmChunk>(base_message, buffer);
         case message_type::kClientInfo:
             return createMessage<ClientInfo>(base_message, buffer);
+        case message_type::kError:
+            return createMessage<msg::Error>(base_message, buffer);
         default:
             return nullptr;
     }
@@ -92,5 +91,3 @@ static std::unique_ptr<BaseMessage> createMessage(const BaseMessage& base_messag
 
 } // namespace factory
 } // namespace msg
-
-#endif

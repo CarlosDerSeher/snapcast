@@ -1,6 +1,7 @@
 # Snapcast binary protocol
 
 Each message sent with the Snapcast binary protocol is split up into two parts:
+
 - A base message that provides general information like time sent/received, type of the message, message size, etc
 - A typed message that carries the rest of the information
 
@@ -13,7 +14,6 @@ When a client joins a server, the following exchanges happen
 1. Client opens a TCP socket to the server (default port is 1704)
 1. Client sends a [Hello](#hello) message
 1. Server sends a [Server Settings](#server-settings) message
-1. Server sends a [Stream Tags](#stream-tags) message
 1. Server sends a [Codec Header](#codec-header) message
     1. Until the server sends this, the client shouldn't play any [Wire Chunk](#wire-chunk) messages
 1. The server will now send [Wire Chunk](#wire-chunk) messages, which can be fed to the audio decoder.
@@ -25,15 +25,16 @@ When a client joins a server, the following exchanges happen
 
 ## Messages
 
-| Typed Message ID | Name                                 | Notes                                                                     |
-|------------------|--------------------------------------|---------------------------------------------------------------------------|
-| 0                | [Base](#base)                        | The beginning of every message containing data about the typed message    |
-| 1                | [Codec Header](#codec-header)        | The codec-specific data to put at the start of a stream to allow decoding |
-| 2                | [Wire Chunk](#wire-chunk)            | A part of an audio stream                                                 |
-| 3                | [Server Settings](#server-settings)  | Settings set from the server like volume, latency, etc                    |
-| 4                | [Time](#time)                        | Used for synchronizing time with the server                               |
-| 5                | [Hello](#hello)                      | Sent by the client when connecting with the server                        |
-| 6                | [Stream Tags](#stream-tags)          | Metadata about the stream for use by the client                           |
+| Typed Message ID | Name                                 | Dir  | Notes                                                                     |
+|------------------|--------------------------------------|------|---------------------------------------------------------------------------|
+| 0                | [Base](#base)                        |      | The beginning of every message containing data about the typed message    |
+| 1                | [Codec Header](#codec-header)        | S->C | The codec-specific data to put at the start of a stream to allow decoding |
+| 2                | [Wire Chunk](#wire-chunk)            | S->C | A part of an audio stream                                                 |
+| 3                | [Server Settings](#server-settings)  | S->C | Settings set from the server like volume, latency, etc                    |
+| 4                | [Time](#time)                        | C->S<br>S->C | Used for synchronizing time with the server                       |
+| 5                | [Hello](#hello)                      | C->S | Sent by the client when connecting with the server                        |
+| 7                | [Client Info](#client-info)          | C->S | Update the server when relevant information changes (e.g. client volume)  |
+| 8                | [Error](#error)                      | S->C | Error response, used e.g. for missing authentication                      |
 
 ### Base
 
@@ -63,7 +64,6 @@ The payload depends on the used codec:
 - Ogg: the vorbis stream header, as described [here](https://xiph.org/vorbis/doc/Vorbis_I_spec.html#x1-610004.2). The decoder must be initialized with this header.
 - PCM: a RIFF WAVE header, as described [here](https://de.wikipedia.org/wiki/RIFF_WAVE). PCM is not encoded, but the decoder must know the samplerate, bit depth and number of channels, which is encoded into the header
 - Opus: a dummy header is sent, containing a 4 byte ID (0x4F505553, ascii for "OPUS"), 4 byte samplerate, 2 byte bit depth, 2 byte channel count (all little endian)
-
 
 ### Wire Chunk
 
@@ -113,6 +113,10 @@ Sample JSON payload (whitespace added for readability):
 ```json
 {
     "Arch": "x86_64",
+    "Auth": {
+        "param": "YmFkYWl4OnBhc3N3ZA==",
+        "scheme": "Basic"
+    },
     "ClientName": "Snapclient",
     "HostName": "my_hostname",
     "ID": "00:11:22:33:44:55",
@@ -120,23 +124,36 @@ Sample JSON payload (whitespace added for readability):
     "MAC": "00:11:22:33:44:55",
     "OS": "Arch Linux",
     "SnapStreamProtocolVersion": 2,
-    "Version": "0.17.1"
+    "Version": "0.32.0"
 }
 ```
 
-### Stream Tags
+The field `Auth` is optional and only used if authentication and authorization is enabled on the server.
 
-| Field   | Type   | Description                                                    |
-|---------|--------|----------------------------------------------------------------|
-| size    | uint32 | Size of the following JSON string                              |
-| payload | char[] | JSON string containing the message (not null terminated)       |
+### Client Info
+
+| Field   | Type   | Description                                              |
+|---------|--------|----------------------------------------------------------|
+| size    | uint32 | Size of the following JSON string                        |
+| payload | char[] | JSON string containing the message (not null terminated) |
 
 Sample JSON payload (whitespace added for readability):
 
 ```json
 {
-    "STREAM": "default"
+    "volume": 100,
+    "muted": false,
 }
 ```
 
-[According to the source](https://github.com/badaix/snapcast/blob/master/common/message/stream_tags.hpp#L55-L56), these tags can vary based on the stream.
+- `volume` can have a value between 0-100 inclusive
+
+### Error
+
+| Field   | Type   | Description                                              |
+|---------|--------|----------------------------------------------------------|
+| code    | uint32 | Error code                                               |
+| size    | uint32 | Size of the following error string                       |
+| error   | char[] | string containing the error (not null terminated)        |
+| size    | uint32 | Size of the following error message                      |
+| error   | char[] | string containing error details (not null terminated)    |

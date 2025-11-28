@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,15 +16,17 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef ALSA_STREAM_HPP
-#define ALSA_STREAM_HPP
+#pragma once
+
 
 // local headers
 #include "pcm_stream.hpp"
 
 // 3rd party headers
 #include <alsa/asoundlib.h>
-#include <boost/asio.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
+
 
 namespace streamreader
 {
@@ -40,26 +42,23 @@ class AlsaStream : public PcmStream
 {
 public:
     /// ctor. Encoded PCM data is passed to the PipeListener
-    AlsaStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri);
+    AlsaStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri,
+               PcmStream::Source source);
 
     void start() override;
     void stop() override;
 
-protected:
+private:
     void do_read();
     void initAlsa();
     void uninitAlsa();
 
-    /// check if the chunk's volume is below the silence threshold
-    bool isSilent(const msg::PcmChunk& chunk) const;
 
     snd_pcm_t* handle_;
-    std::unique_ptr<msg::PcmChunk> chunk_;
     bool first_;
     std::chrono::time_point<std::chrono::steady_clock> nextTick_;
     boost::asio::steady_timer read_timer_;
     std::string device_;
-    std::vector<char> silent_chunk_;
     std::chrono::microseconds silence_;
     std::string lastException_;
 
@@ -67,9 +66,6 @@ protected:
     bool send_silence_;
     /// silence duration before switching the stream to idle
     std::chrono::milliseconds idle_threshold_;
-    int32_t silence_threshold_ = 0;
 };
 
 } // namespace streamreader
-
-#endif

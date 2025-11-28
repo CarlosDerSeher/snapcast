@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,10 +16,16 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef STREAM_SESSION_TCP_HPP
-#define STREAM_SESSION_TCP_HPP
+#pragma once
 
+
+// local headers
 #include "stream_session.hpp"
+
+// 3rd party headers
+#include <boost/asio/ip/tcp.hpp>
+
+// standard headers
 
 using boost::asio::ip::tcp;
 
@@ -34,20 +40,18 @@ class StreamSessionTcp : public StreamSession
 {
 public:
     /// ctor. Received message from the client are passed to StreamMessageReceiver
-    StreamSessionTcp(StreamMessageReceiver* receiver, tcp::socket&& socket);
+    StreamSessionTcp(StreamMessageReceiver* receiver, const ServerSettings& server_settings, tcp::socket&& socket);
     ~StreamSessionTcp() override;
     void start() override;
     void stop() override;
     std::string getIP() override;
 
 protected:
-    void read_next();
-    void sendAsync(const shared_const_buffer& buffer, const WriteHandler& handler) override;
+    /// Read next message
+    void readNext();
+    /// Send message @p buffer and pass result to @p handler
+    void sendAsync(const shared_const_buffer& buffer, WriteHandler&& handler) override;
 
 private:
     tcp::socket socket_;
 };
-
-
-
-#endif

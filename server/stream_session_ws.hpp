@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,19 +16,31 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef STREAM_SESSION_WS_HPP
-#define STREAM_SESSION_WS_HPP
+#pragma once
 
+
+// local headers
 #include "stream_session.hpp"
+
+// 3rd party headers
+#include <boost/asio/strand.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
-#include <deque>
+#ifdef HAS_OPENSSL
+#include <boost/beast/ssl.hpp>
+#endif
+
+// standard headers
+
 
 namespace beast = boost::beast;         // from <boost/beast.hpp>
-namespace http = beast::http;           // from <boost/beast/http.hpp>
 namespace websocket = beast::websocket; // from <boost/beast/websocket.hpp>
-namespace net = boost::asio;            // from <boost/asio.hpp>
-
+using tcp_socket = boost::asio::ip::tcp::socket;
+using tcp_websocket = websocket::stream<tcp_socket>;
+#ifdef HAS_OPENSSL
+using ssl_socket = boost::asio::ssl::stream<tcp_socket>;
+using ssl_websocket = websocket::stream<ssl_socket>;
+#endif
 
 /// Endpoint for a connected control client.
 /**
@@ -39,25 +51,30 @@ namespace net = boost::asio;            // from <boost/asio.hpp>
 class StreamSessionWebsocket : public StreamSession
 {
 public:
-    /// ctor. Received message from the client are passed to StreamMessageReceiver
-    StreamSessionWebsocket(StreamMessageReceiver* receiver, websocket::stream<beast::tcp_stream>&& socket);
+#ifdef HAS_OPENSSL
+    /// c'tor for SSL. Received message from the client are passed to StreamMessageReceiver
+    StreamSessionWebsocket(StreamMessageReceiver* receiver, const ServerSettings& server_settings, ssl_websocket&& ssl_ws);
+#endif
+    /// c'tor for TCP
+    StreamSessionWebsocket(StreamMessageReceiver* receiver, const ServerSettings& server_settings, tcp_websocket&& tcp_ws);
     ~StreamSessionWebsocket() override;
     void start() override;
     void stop() override;
     std::string getIP() override;
 
-protected:
-    // Websocket methods
-    void sendAsync(const shared_const_buffer& buffer, const WriteHandler& handler) override;
+private:
+    /// Send message @p buffer and pass result to @p handler
+    void sendAsync(const shared_const_buffer& buffer, WriteHandler&& handler) override;
+    /// Read callback
     void on_read_ws(beast::error_code ec, std::size_t bytes_transferred);
+    /// Read loop
     void do_read_ws();
 
-    websocket::stream<beast::tcp_stream> ws_;
-
-protected:
-    beast::flat_buffer buffer_;
-};
-
-
-
+    std::optional<tcp_websocket> tcp_ws_; ///< TCP websocket
+#ifdef HAS_OPENSSL
+    std::optional<ssl_websocket> ssl_ws_; ///< SSL websocket
 #endif
+
+    beast::flat_buffer buffer_; ///< read buffer
+    bool is_ssl_;               ///< are we in SSL mode?
+};

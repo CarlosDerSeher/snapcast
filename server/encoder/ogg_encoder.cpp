@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,15 +16,20 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#include <cstring>
-#include <iostream>
+// prototype/interface header file
+#include "ogg_encoder.hpp"
 
+// local headers
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
-#include "common/utils.hpp"
 #include "common/utils/string_utils.hpp"
-#include "ogg_encoder.hpp"
+
+// standard headers
+#include <cstring>
+#include <iostream>
+#include <memory>
+
 
 using namespace std;
 
@@ -33,7 +38,8 @@ namespace encoder
 
 static constexpr auto LOG_TAG = "OggEnc";
 
-OggEncoder::OggEncoder(const std::string& codecOptions) : Encoder(codecOptions), lastGranulepos_(0)
+
+OggEncoder::OggEncoder(std::string codecOptions) : Encoder(std::move(codecOptions)), lastGranulepos_(0)
 {
 }
 
@@ -80,19 +86,19 @@ void OggEncoder::encode(const msg::PcmChunk& chunk)
     {
         if (sampleFormat_.sampleSize() == 1)
         {
-            auto* chunkBuffer = reinterpret_cast<int8_t*>(chunk.payload);
+            const auto* chunkBuffer = reinterpret_cast<int8_t*>(chunk.payload);
             for (int i = 0; i < frames; i++)
                 buffer[channel][i] = chunkBuffer[sampleFormat_.channels() * i + channel] / 128.f;
         }
         else if (sampleFormat_.sampleSize() == 2)
         {
-            auto* chunkBuffer = reinterpret_cast<int16_t*>(chunk.payload);
+            const auto* chunkBuffer = reinterpret_cast<int16_t*>(chunk.payload);
             for (int i = 0; i < frames; i++)
                 buffer[channel][i] = chunkBuffer[sampleFormat_.channels() * i + channel] / 32768.f;
         }
         else if (sampleFormat_.sampleSize() == 4)
         {
-            auto* chunkBuffer = reinterpret_cast<int32_t*>(chunk.payload);
+            const auto* chunkBuffer = reinterpret_cast<int32_t*>(chunk.payload);
             for (int i = 0; i < frames; i++)
                 buffer[channel][i] = chunkBuffer[sampleFormat_.channels() * i + channel] / 2147483648.f;
         }
@@ -234,8 +240,8 @@ void OggEncoder::initEncoder()
     /* set up our packet->stream encoder */
     /* pick a random serial number; that way we can more likely build
      chained streams just by concatenation */
-    srand(time(nullptr));
-    ogg_stream_init(&os_, rand());
+    srand(time(nullptr));          // NOLINT
+    ogg_stream_init(&os_, rand()); // NOLINT
 
     /* Vorbis streams begin with three headers; the initial header (with
      most of the codec setup parameters) which is mandated by the Ogg
@@ -257,7 +263,7 @@ void OggEncoder::initEncoder()
      * audio data will start on a new page, as per spec
      */
     size_t pos(0);
-    headerChunk_.reset(new msg::CodecHeader("ogg"));
+    headerChunk_ = std::make_shared<msg::CodecHeader>("ogg");
     while (true)
     {
         int result = ogg_stream_flush(&os_, &og_);

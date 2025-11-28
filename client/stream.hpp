@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2024  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,23 +16,26 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef STREAM_HPP
-#define STREAM_HPP
+#pragma once
 
-#include <atomic>
-#include <deque>
-#include <memory>
+// local headers
+#include "common/message/pcm_chunk.hpp"
+#include "common/queue.hpp"
+#include "common/resampler.hpp"
+#include "common/sample_format.hpp"
+#include "common/utils/logging.hpp"
+#include "double_buffer.hpp"
 
+// 3rd party headers
 #ifdef HAS_SOXR
 #include <soxr.h>
 #endif
 
-#include "common/queue.h"
-#include "common/sample_format.hpp"
-#include "double_buffer.hpp"
-#include "message/message.hpp"
-#include "message/pcm_chunk.hpp"
-#include "resampler.hpp"
+// standard headers
+#include <atomic>
+#include <memory>
+
+
 
 /// Time synchronized audio stream
 /**
@@ -42,11 +45,14 @@
 class Stream
 {
 public:
+    /// c'tor
     Stream(const SampleFormat& in_format, const SampleFormat& out_format);
+    /// d'tor
     virtual ~Stream() = default;
 
     /// Adds PCM data to the queue
     void addChunk(std::unique_ptr<msg::PcmChunk> chunk);
+    /// Remove all chunks from the queue
     void clearChunks();
 
     /// Get PCM data, which will be played out in "outputBufferDacTime" time
@@ -65,11 +71,13 @@ public:
     /// "Server buffer": playout latency, e.g. 1000ms
     void setBufferLen(size_t bufferLenMs);
 
+    /// @return sampleformat
     const SampleFormat& getFormat() const
     {
         return format_;
     }
 
+    /// @return if chunk was avabilable within @p timeout
     bool waitForChunk(const std::chrono::milliseconds& timeout) const;
 
 private:
@@ -129,8 +137,7 @@ private:
     mutable std::mutex mutex_;
 
     bool hard_sync_;
+
+    /// Log "failed to get chunk" only once per second
+    utils::logging::TimeConditional time_cond_;
 };
-
-
-
-#endif

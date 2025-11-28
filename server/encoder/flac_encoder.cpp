@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,12 +16,22 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#include <iostream>
 
+// prototype/interface header file
+#include "flac_encoder.hpp"
+
+// local headers
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
-#include "flac_encoder.hpp"
+
+// 3rd party headers
+#include "FLAC/metadata.h"
+
+// standard headers
+#include <iostream>
+#include <memory>
+
 
 using namespace std;
 
@@ -30,10 +40,13 @@ namespace encoder
 
 static constexpr auto LOG_TAG = "FlacEnc";
 
-FlacEncoder::FlacEncoder(const std::string& codecOptions) : Encoder(codecOptions), encoder_(nullptr), pcmBufferSize_(0), encodedSamples_(0), flacChunk_(nullptr)
+FlacEncoder::FlacEncoder(std::string codecOptions)
+    : Encoder(std::move(codecOptions)), encoder_(nullptr), pcmBufferSize_(0), encodedSamples_(0), flacChunk_(nullptr)
 {
-    headerChunk_.reset(new msg::CodecHeader("flac"));
+    headerChunk_ = std::make_shared<msg::CodecHeader>("flac");
     pcmBuffer_ = static_cast<FLAC__int32*>(malloc(pcmBufferSize_ * sizeof(FLAC__int32)));
+    metadata_[0] = nullptr;
+    metadata_[1] = nullptr;
 }
 
 
@@ -85,7 +98,8 @@ void FlacEncoder::encode(const msg::PcmChunk& chunk)
         pcmBuffer_ = static_cast<FLAC__int32*>(realloc(pcmBuffer_, pcmBufferSize_ * sizeof(FLAC__int32)));
     }
 
-    auto clip = [](int32_t min, int32_t max, int32_t value) -> int32_t {
+    auto clip = [](int32_t min, int32_t max, int32_t value) -> int32_t
+    {
         if (value < min)
             return min;
         if (value > max)
@@ -134,6 +148,7 @@ void FlacEncoder::encode(const msg::PcmChunk& chunk)
 }
 
 
+// NOLINTNEXTLINE
 FLAC__StreamEncoderWriteStatus FlacEncoder::write_callback(const FLAC__StreamEncoder* /*encoder*/, const FLAC__byte buffer[], size_t bytes, unsigned samples,
                                                            unsigned current_frame)
 {
@@ -156,6 +171,7 @@ FLAC__StreamEncoderWriteStatus FlacEncoder::write_callback(const FLAC__StreamEnc
 
 namespace callback
 {
+// NOLINTNEXTLINE
 FLAC__StreamEncoderWriteStatus write_callback(const FLAC__StreamEncoder* encoder, const FLAC__byte buffer[], size_t bytes, unsigned samples,
                                               unsigned current_frame, void* client_data)
 {
@@ -215,7 +231,7 @@ void FlacEncoder::initEncoder()
         throw SnapException("out of memory or tag error");
 
     metadata_[1]->length = 1234; // set the padding length
-    ok = FLAC__stream_encoder_set_metadata(encoder_, metadata_, 2);
+    ok = FLAC__stream_encoder_set_metadata(encoder_, metadata_.data(), 2);
     if (ok == 0)
         throw SnapException("error setting meta data");
 

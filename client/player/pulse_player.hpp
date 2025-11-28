@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2020  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,16 +16,19 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef PULSE_PLAYER_HPP
-#define PULSE_PLAYER_HPP
+#pragma once
 
+// local headers
 #include "player.hpp"
 
+// 3rd party headers
+#include <pulse/pulseaudio.h>
+
+// standard headers
 #include <atomic>
 #include <cstdio>
 #include <memory>
 #include <optional>
-#include <pulse/pulseaudio.h>
 
 
 namespace player
@@ -39,7 +42,9 @@ static constexpr auto PULSE = "pulse";
 class PulsePlayer : public Player
 {
 public:
+    /// c'tor
     PulsePlayer(boost::asio::io_context& io_context, const ClientSettings::Player& settings, std::shared_ptr<Stream> stream);
+    /// d'tor
     virtual ~PulsePlayer();
 
     void start() override;
@@ -48,15 +53,15 @@ public:
     /// List the system's audio output devices
     static std::vector<PcmDevice> pcm_list(const std::string& parameter);
 
-protected:
+private:
     bool needsThread() const override;
     void worker() override;
 
     void connect();
     void disconnect();
 
-    bool getHardwareVolume(double& volume, bool& muted) override;
-    void setHardwareVolume(double volume, bool muted) override;
+    bool getHardwareVolume(Volume& volume) override;
+    void setHardwareVolume(const Volume& volume) override;
 
     void triggerVolumeUpdate();
 
@@ -87,5 +92,3 @@ protected:
 };
 
 } // namespace player
-
-#endif

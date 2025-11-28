@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,30 +16,32 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#include <cmath>
-#include <iostream>
+// prototype/interface header file
+#include "player.hpp"
 
-#ifdef WINDOWS
-#include <cstdlib>
-#else
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpragmas"
-#pragma GCC diagnostic ignored "-Wunused-result"
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#pragma GCC diagnostic ignored "-Wmissing-braces"
-#pragma GCC diagnostic ignored "-Wnarrowing"
-#pragma GCC diagnostic ignored "-Wc++11-narrowing"
-#include <boost/process/args.hpp>
-#include <boost/process/child.hpp>
-#include <boost/process/exe.hpp>
-#pragma GCC diagnostic pop
-#endif
-
+// local headers
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
 #include "common/utils/string_utils.hpp"
-#include "player.hpp"
+
+// 3rd party headers
+#ifdef SUPPORTS_VOLUME_SCRIPT
+#if BOOST_VERSION >= 108800
+#include <boost/process/v1/args.hpp>
+#include <boost/process/v1/child.hpp>
+#include <boost/process/v1/detail/on_exit.hpp>
+#include <boost/process/v1/exe.hpp>
+#else
+#include <boost/process.hpp>
+#endif
+#endif
+
+// standard headers
+#include <cmath>
+#include <iostream>
+#include <memory>
+#include <optional>
 
 
 using namespace std;
@@ -50,7 +52,7 @@ namespace player
 static constexpr auto LOG_TAG = "Player";
 
 Player::Player(boost::asio::io_context& io_context, const ClientSettings::Player& settings, std::shared_ptr<Stream> stream)
-    : io_context_(io_context), active_(false), stream_(stream), settings_(settings), volume_(1.0), muted_(false), volCorrection_(1.0)
+    : io_context_(io_context), active_(false), stream_(std::move(stream)), settings_(settings), volCorrection_(1.0)
 {
     string sharing_mode;
     switch (settings_.sharing_mode)
@@ -66,7 +68,8 @@ Player::Player(boost::asio::io_context& io_context, const ClientSettings::Player
             break;
     }
 
-    auto not_empty = [](const std::string& value) -> std::string {
+    auto not_empty = [](const std::string& value) -> std::string
+    {
         if (!value.empty())
             return value;
         else
@@ -93,14 +96,14 @@ Player::Player(boost::asio::io_context& io_context, const ClientSettings::Player
             break;
     }
     LOG(INFO, LOG_TAG) << "Mixer mode: " << mixer << ", parameters: " << not_empty(settings_.mixer.parameter) << "\n";
-    LOG(INFO, LOG_TAG) << "Sampleformat: " << (settings_.sample_format.isInitialized() ? settings_.sample_format.toString() : stream->getFormat().toString())
-                       << ", stream: " << stream->getFormat().toString() << "\n";
+    LOG(INFO, LOG_TAG) << "Sampleformat: " << (settings_.sample_format.isInitialized() ? settings_.sample_format.toString() : stream_->getFormat().toString())
+                       << ", stream: " << stream_->getFormat().toString() << "\n";
 }
 
 
 Player::~Player()
 {
-    stop();
+    stop(); // NOLINT
 }
 
 
@@ -140,18 +143,16 @@ void Player::worker()
 }
 
 
-void Player::setHardwareVolume(double volume, bool muted)
+void Player::setHardwareVolume(const Volume& volume)
 {
     std::ignore = volume;
-    std::ignore = muted;
     throw SnapException("Failed to set hardware mixer volume: not supported");
 }
 
 
-bool Player::getHardwareVolume(double& volume, bool& muted)
+bool Player::getHardwareVolume(Volume& volume)
 {
     std::ignore = volume;
-    std::ignore = muted;
     throw SnapException("Failed to get hardware mixer volume: not supported");
 }
 
@@ -164,7 +165,7 @@ void Player::adjustVolume(char* buffer, size_t frames)
     // for any other mixer, we might still have to apply the volCorrection_
     if (settings_.mixer.mode == ClientSettings::Mixer::Mode::software)
     {
-        volume = muted_ ? 0. : volume_;
+        volume = volume_.mute ? 0. : volume_.volume;
         volume *= volCorrection_;
     }
 
@@ -186,8 +187,8 @@ void Player::adjustVolume(char* buffer, size_t frames)
 // https://lists.linuxaudio.org/pipermail/linux-audio-dev/2009-May/thread.html#22198
 void Player::setVolume_poly(double volume, double exp)
 {
-    volume_ = std::pow(volume, exp);
-    LOG(DEBUG, LOG_TAG) << "setVolume poly with exp " << exp << ": " << volume << " => " << volume_ << "\n";
+    volume_.volume = std::pow(volume, exp);
+    LOG(DEBUG, LOG_TAG) << "setVolume poly with exp " << exp << ": " << volume << " => " << volume_.volume << "\n";
 }
 
 
@@ -196,19 +197,18 @@ void Player::setVolume_exp(double volume, double base)
 {
     //	double base = M_E;
     //	double base = 10.;
-    volume_ = (pow(base, volume) - 1) / (base - 1);
-    LOG(DEBUG, LOG_TAG) << "setVolume exp with base " << base << ": " << volume << " => " << volume_ << "\n";
+    volume_.volume = (pow(base, volume) - 1) / (base - 1);
+    LOG(DEBUG, LOG_TAG) << "setVolume exp with base " << base << ": " << volume << " => " << volume_.volume << "\n";
 }
 
 
-void Player::setVolume(double volume, bool mute)
+void Player::setVolume(const Volume& volume)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     volume_ = volume;
-    muted_ = mute;
     if (settings_.mixer.mode == ClientSettings::Mixer::Mode::hardware)
     {
-        setHardwareVolume(volume, mute);
+        setHardwareVolume(volume);
     }
     else if (settings_.mixer.mode == ClientSettings::Mixer::Mode::software)
     {
@@ -229,27 +229,51 @@ void Player::setVolume(double volume, bool mute)
             }
         }
         if (mode == "poly")
-            setVolume_poly(volume, (dparam < 0) ? 3. : dparam);
+            setVolume_poly(volume.volume, (dparam < 0) ? 3. : dparam);
         else
-            setVolume_exp(volume, (dparam < 0) ? 10. : dparam);
+            setVolume_exp(volume.volume, (dparam < 0) ? 10. : dparam);
     }
     else if (settings_.mixer.mode == ClientSettings::Mixer::Mode::script)
     {
-        try
+#ifdef SUPPORTS_VOLUME_SCRIPT
+        static std::optional<Volume> pending_volume_change;
+        static boost::process::child mixer_script_process;
+        if (mixer_script_process.running())
         {
-#ifdef WINDOWS
-            string cmd = settings_.mixer.parameter + " --volume " + cpt::to_string(volume) + " --mute " + (mute ? "true" : "false");
-            std::system(cmd.c_str());
+            pending_volume_change = volume;
+            LOG(DEBUG, LOG_TAG) << "Volume mixer script still running, deferring this volume change\n";
+        }
+        else
+        {
+            try
+            {
+                namespace bp = boost::process;
+                mixer_script_process = bp::child(bp::exe = settings_.mixer.parameter,
+                                                 bp::args = {"--volume", cpt::to_string(volume.volume), "--mute", volume.mute ? "true" : "false"},
+                                                 bp::on_exit(
+                                                     [&](int ret_val, std::error_code ec)
+                {
+                    std::unique_lock<std::mutex> lock(mutex_);
+                    LOG(DEBUG, LOG_TAG) << "Error code: " << ec.message() << ", i: " << ret_val << "\n";
+                    if (pending_volume_change.has_value())
+                    {
+                        Volume v = pending_volume_change.value();
+                        pending_volume_change = std::nullopt;
+                        lock.unlock();
+                        setVolume(v);
+                    }
+                }),
+                                                 io_context_);
+            }
+            catch (const std::exception& e)
+            {
+                LOG(ERROR, LOG_TAG) << "Failed to run script '" + settings_.mixer.parameter + "', error: " << e.what() << "\n";
+                pending_volume_change = std::nullopt;
+            }
+        }
 #else
-            using namespace boost::process;
-            child c(exe = settings_.mixer.parameter, args = {"--volume", cpt::to_string(volume), "--mute", mute ? "true" : "false"});
-            c.detach();
+        LOG(ERROR, LOG_TAG) << "Mixer mode 'script' not supported\n";
 #endif
-        }
-        catch (const std::exception& e)
-        {
-            LOG(ERROR, LOG_TAG) << "Failed to run script '" + settings_.mixer.parameter + "', error: " << e.what() << "\n";
-        }
     }
 }
 

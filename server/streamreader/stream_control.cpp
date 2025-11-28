@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,10 +22,10 @@
 // local headers
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
-#include "common/str_compat.hpp"
 #include "common/utils/file_utils.hpp"
-#include "common/utils/string_utils.hpp"
-#include "encoder/encoder_factory.hpp"
+
+// 3rd party headers
+#include <boost/asio/read_until.hpp>
 
 // standard headers
 #include <memory>
@@ -39,15 +39,10 @@ namespace streamreader
 static constexpr auto LOG_TAG = "Script";
 
 
-StreamControl::StreamControl(const net::any_io_executor& executor) : executor_(executor)
+StreamControl::StreamControl(const boost::asio::any_io_executor& executor) : executor_(executor) // NOLINT
 {
 }
 
-
-StreamControl::~StreamControl()
-{
-    stop();
-}
 
 
 void StreamControl::start(const std::string& stream_id, const ServerSettings& server_setttings, const OnNotification& notification_handler,
@@ -64,7 +59,8 @@ void StreamControl::start(const std::string& stream_id, const ServerSettings& se
 void StreamControl::command(const jsonrpcpp::Request& request, const OnResponse& response_handler)
 {
     // use strand to serialize commands sent from different threads
-    net::post(executor_, [this, request, response_handler]() {
+    boost::asio::post(executor_, [this, request, response_handler]()
+    {
         if (response_handler)
             request_callbacks_[request.id()] = response_handler;
 
@@ -72,10 +68,6 @@ void StreamControl::command(const jsonrpcpp::Request& request, const OnResponse&
     });
 }
 
-
-void StreamControl::stop()
-{
-}
 
 
 void StreamControl::onReceive(const std::string& json)
@@ -137,18 +129,20 @@ void StreamControl::onLog(std::string message)
 
 
 
-ScriptStreamControl::ScriptStreamControl(const net::any_io_executor& executor, const std::string& script) : StreamControl(executor), script_(script)
+ScriptStreamControl::ScriptStreamControl(const boost::asio::any_io_executor& executor, const std::filesystem::path& plugin_dir, std::string script,
+                                         std::string params)
+    : StreamControl(executor), script_(std::move(script)), params_(std::move(params))
 {
     namespace fs = utils::file;
     if (!fs::exists(script_))
     {
-        std::string plugin_path = "/usr/share/snapserver/plug-ins/";
-        if (fs::exists(plugin_path + script_))
-            script_ = plugin_path + script_;
+        if (fs::exists(plugin_dir / script_))
+            script_ = plugin_dir / script_;
         else
             throw SnapException("Control script not found: \"" + script_ + "\"");
     }
 }
+
 
 
 void ScriptStreamControl::doStart(const std::string& stream_id, const ServerSettings& server_setttings)
@@ -156,19 +150,24 @@ void ScriptStreamControl::doStart(const std::string& stream_id, const ServerSett
     pipe_stderr_ = bp::pipe();
     pipe_stdout_ = bp::pipe();
     stringstream params;
+    params << " " << params_;
     params << " \"--stream=" + stream_id + "\"";
     if (server_setttings.http.enabled)
+    {
         params << " --snapcast-port=" << server_setttings.http.port;
+        params << " --snapcast-host=" << server_setttings.http.host;
+    }
+    LOG(DEBUG, LOG_TAG) << "Starting control script: '" << script_ << "', params: '" << params.str() << "'\n";
     try
     {
-        process_ = bp::child(
-            script_ + params.str(), bp::std_out > pipe_stdout_, bp::std_err > pipe_stderr_, bp::std_in < in_,
-            bp::on_exit = [](int exit, const std::error_code& ec_in) {
-                auto severity = AixLog::Severity::debug;
-                if (exit != 0)
-                    severity = AixLog::Severity::error;
-                LOG(severity, LOG_TAG) << "Exit code: " << exit << ", message: " << ec_in.message() << "\n";
-            });
+        process_ = bp::child(script_ + params.str(), bp::std_out > pipe_stdout_, bp::std_err > pipe_stderr_, bp::std_in < in_,
+                             bp::on_exit = [](int exit, const std::error_code& ec_in)
+        {
+            auto severity = AixLog::Severity::debug;
+            if (exit != 0)
+                severity = AixLog::Severity::error;
+            LOG(severity, LOG_TAG) << "Exit code: " << exit << ", message: " << ec_in.message() << "\n";
+        });
     }
     catch (const std::exception& e)
     {
@@ -194,7 +193,8 @@ void ScriptStreamControl::doCommand(const jsonrpcpp::Request& request)
 void ScriptStreamControl::stderrReadLine()
 {
     const std::string delimiter = "\n";
-    net::async_read_until(*stream_stderr_, streambuf_stderr_, delimiter, [this, delimiter](const std::error_code& ec, std::size_t bytes_transferred) {
+    boost::asio::async_read_until(*stream_stderr_, streambuf_stderr_, delimiter, [this, delimiter](const std::error_code& ec, std::size_t bytes_transferred)
+    {
         if (ec)
         {
             LOG(ERROR, LOG_TAG) << "Error while reading from stderr: " << ec.message() << "\n";
@@ -214,7 +214,8 @@ void ScriptStreamControl::stderrReadLine()
 void ScriptStreamControl::stdoutReadLine()
 {
     const std::string delimiter = "\n";
-    net::async_read_until(*stream_stdout_, streambuf_stdout_, delimiter, [this, delimiter](const std::error_code& ec, std::size_t bytes_transferred) {
+    boost::asio::async_read_until(*stream_stdout_, streambuf_stdout_, delimiter, [this, delimiter](const std::error_code& ec, std::size_t bytes_transferred)
+    {
         if (ec)
         {
             LOG(ERROR, LOG_TAG) << "Error while reading from stdout: " << ec.message() << "\n";
@@ -228,16 +229,6 @@ void ScriptStreamControl::stdoutReadLine()
         streambuf_stdout_.consume(bytes_transferred);
         stdoutReadLine();
     });
-}
-
-
-
-void ScriptStreamControl::stop()
-{
-    if (process_.running())
-    {
-        ::kill(-process_.native_handle(), SIGINT);
-    }
 }
 
 

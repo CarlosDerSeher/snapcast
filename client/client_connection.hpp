@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025 Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,28 +16,43 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef CLIENT_CONNECTION_H
-#define CLIENT_CONNECTION_H
+#pragma once
 
+// local headers
 #include "client_settings.hpp"
+#include "common/message/factory.hpp"
+#include "common/message/message.hpp"
 #include "common/time_defs.hpp"
-#include "message/factory.hpp"
-#include "message/message.hpp"
 
-#include <atomic>
-#include <boost/asio.hpp>
-#include <condition_variable>
+// 3rd party headers
+#include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/strand.hpp>
+#include <boost/asio/streambuf.hpp>
+#include <boost/beast/core.hpp>
+#ifdef HAS_OPENSSL
+#include <boost/beast/ssl.hpp>
+#endif
+#include <boost/beast/websocket.hpp>
+
+// standard headers
 #include <deque>
 #include <memory>
 #include <mutex>
-#include <set>
+#include <optional>
 #include <string>
-#include <thread>
 
 
-using boost::asio::ip::tcp;
-namespace net = boost::asio;
-
+// using boost::asio::ip::tcp;
+namespace beast = boost::beast;         // from <boost/beast.hpp>
+namespace websocket = beast::websocket; // from <boost/beast/websocket.hpp>
+using tcp_socket = boost::asio::ip::tcp::socket;
+using tcp_websocket = websocket::stream<tcp_socket>;
+#ifdef HAS_OPENSSL
+using ssl_socket = boost::asio::ssl::stream<tcp_socket>;
+using ssl_websocket = websocket::stream<ssl_socket>;
+#endif
 
 class ClientConnection;
 
@@ -48,66 +63,32 @@ using MessageHandler = std::function<void(const boost::system::error_code&, std:
 class PendingRequest : public std::enable_shared_from_this<PendingRequest>
 {
 public:
-    PendingRequest(const net::strand<net::any_io_executor>& strand, uint16_t reqId, const MessageHandler<msg::BaseMessage>& handler)
-        : id_(reqId), timer_(strand), strand_(strand), handler_(handler){};
-
-    virtual ~PendingRequest()
-    {
-        handler_ = nullptr;
-        timer_.cancel();
-    }
+    /// c'tor
+    PendingRequest(const boost::asio::strand<boost::asio::any_io_executor>& strand, uint16_t reqId, const MessageHandler<msg::BaseMessage>& handler);
+    /// d'tor
+    virtual ~PendingRequest();
 
     /// Set the response for the pending request and passes it to the handler
     /// @param value the response message
-    void setValue(std::unique_ptr<msg::BaseMessage> value)
-    {
-        net::post(strand_, [this, self = shared_from_this(), val = std::move(value)]() mutable {
-            timer_.cancel();
-            if (handler_)
-                handler_({}, std::move(val));
-        });
-    }
+    void setValue(std::unique_ptr<msg::BaseMessage> value);
 
     /// @return the id of the request
-    uint16_t id() const
-    {
-        return id_;
-    }
+    uint16_t id() const;
 
     /// Start the timer for the request
     /// @param timeout the timeout to wait for the reception of the response
-    void startTimer(const chronos::usec& timeout)
-    {
-        timer_.expires_after(timeout);
-        timer_.async_wait([this, self = shared_from_this()](boost::system::error_code ec) {
-            if (!handler_)
-                return;
-            if (!ec)
-            {
-                // !ec => expired => timeout
-                handler_(boost::asio::error::timed_out, nullptr);
-                handler_ = nullptr;
-            }
-            else if (ec != boost::asio::error::operation_aborted)
-            {
-                // ec != aborted => not cancelled (in setValue)
-                //   => should not happen, but who knows => pass the error to the handler
-                handler_(ec, nullptr);
-            }
-        });
-    }
+    void startTimer(const chronos::usec& timeout);
 
     /// Needed to put the requests in a container
-    bool operator<(const PendingRequest& other) const
-    {
-        return (id_ < other.id());
-    }
+    bool operator<(const PendingRequest& other) const;
 
+    /// Cancel the request
+    void cancel();
 
 private:
     uint16_t id_;
     boost::asio::steady_timer timer_;
-    net::strand<net::any_io_executor> strand_;
+    boost::asio::strand<boost::asio::any_io_executor> strand_;
     MessageHandler<msg::BaseMessage> handler_;
 };
 
@@ -122,18 +103,21 @@ private:
 class ClientConnection
 {
 public:
+    /// Result callback with boost::error_code
     using ResultHandler = std::function<void(const boost::system::error_code&)>;
+    /// Result callback of a write operation
+    using WriteHandler = std::function<void(boost::system::error_code ec, std::size_t length)>;
 
     /// c'tor
-    ClientConnection(boost::asio::io_context& io_context, const ClientSettings::Server& server);
+    ClientConnection(boost::asio::io_context& io_context, ClientSettings::Server server);
     /// d'tor
-    virtual ~ClientConnection();
+    virtual ~ClientConnection() = default;
 
     /// async connect
     /// @param handler async result handler
     void connect(const ResultHandler& handler);
     /// disconnect the socket
-    void disconnect();
+    virtual void disconnect() = 0;
 
     /// async send a message
     /// @param message the message
@@ -150,7 +134,8 @@ public:
     template <typename Message>
     void sendRequest(const msg::message_ptr& message, const chronos::usec& timeout, const MessageHandler<Message>& handler)
     {
-        sendRequest(message, timeout, [handler](const boost::system::error_code& ec, std::unique_ptr<msg::BaseMessage> response) {
+        sendRequest(message, timeout, [handler](const boost::system::error_code& ec, std::unique_ptr<msg::BaseMessage> response)
+        {
             if (ec)
                 handler(ec, nullptr);
             else if (auto casted_response = msg::message_cast<Message>(std::move(response)))
@@ -160,38 +145,150 @@ public:
         });
     }
 
-    std::string getMacAddress();
+    /// @return MAC address of the client
+    virtual std::string getMacAddress() = 0;
 
     /// async get the next message
     /// @param handler the next received message or error
-    void getNextMessage(const MessageHandler<msg::BaseMessage>& handler);
+    virtual void getNextMessage(const MessageHandler<msg::BaseMessage>& handler) = 0;
 
 protected:
+    /// Send @p buffer, return result in @p write_handler
+    virtual void write(boost::asio::streambuf& buffer, WriteHandler&& write_handler) = 0;
+
+    /// Connect to @p endpoint
+    virtual boost::system::error_code doConnect(boost::asio::ip::basic_endpoint<boost::asio::ip::tcp> endpoint) = 0;
+
+    /// Handle received messages, check for response of pending requests
+    void messageReceived(std::unique_ptr<msg::BaseMessage> message, const MessageHandler<msg::BaseMessage>& handler);
+
+    /// Send next pending message from messages_
     void sendNext();
 
+    /// Cancel all pending requests and timers
+    void cancelRequests();
+
+    /// Base message holding the received message
     msg::BaseMessage base_message_;
-    std::vector<char> buffer_;
-    size_t base_msg_size_;
 
-    boost::asio::io_context& io_context_;
-    net::strand<net::any_io_executor> strand_;
-    tcp::resolver resolver_;
-    tcp::socket socket_;
-    std::vector<std::weak_ptr<PendingRequest>> pendingRequests_;
+    /// Strand to serialize send/receive
+    boost::asio::strand<boost::asio::any_io_executor> strand_;
+
+    /// TCP resolver
+    boost::asio::ip::tcp::resolver resolver_;
+
+    /// List of pending requests, waiting for a response (Message::refersTo)
+    std::vector<std::weak_ptr<PendingRequest>> pending_requests_;
+    /// unique request id to match a response
     uint16_t reqId_;
+    /// Server settings (host and port)
     ClientSettings::Server server_;
+    /// Size of a base message (= message header)
+    const size_t base_msg_size_;
+    /// Send stream buffer
+    boost::asio::streambuf streambuf_;
 
+    /// A pending request
     struct PendingMessage
     {
-        PendingMessage(const msg::message_ptr& msg, ResultHandler handler) : msg(msg), handler(handler)
+        /// c'tor
+        PendingMessage(msg::message_ptr msg, ResultHandler handler) : msg(std::move(msg)), handler(std::move(handler))
         {
         }
+        /// Pointer to the request
         msg::message_ptr msg;
+        /// Response handler
         ResultHandler handler;
     };
+
+    /// Pending messages to be sent
     std::deque<PendingMessage> messages_;
 };
 
 
+/// Plain TCP connection
+class ClientConnectionTcp : public ClientConnection
+{
+public:
+    /// c'tor
+    ClientConnectionTcp(boost::asio::io_context& io_context, ClientSettings::Server server);
+    /// d'tor
+    virtual ~ClientConnectionTcp();
 
-#endif
+    void disconnect() override;
+    std::string getMacAddress() override;
+    void getNextMessage(const MessageHandler<msg::BaseMessage>& handler) override;
+
+private:
+    boost::system::error_code doConnect(boost::asio::ip::basic_endpoint<boost::asio::ip::tcp> endpoint) override;
+    void write(boost::asio::streambuf& buffer, WriteHandler&& write_handler) override;
+
+    /// TCP socket
+    tcp_socket socket_;
+    /// Receive buffer
+    std::vector<char> buffer_;
+};
+
+
+/// Websocket connection
+class ClientConnectionWs : public ClientConnection
+{
+public:
+    /// c'tor
+    ClientConnectionWs(boost::asio::io_context& io_context, ClientSettings::Server server);
+    /// d'tor
+    virtual ~ClientConnectionWs();
+
+    void disconnect() override;
+    std::string getMacAddress() override;
+    void getNextMessage(const MessageHandler<msg::BaseMessage>& handler) override;
+
+private:
+    boost::system::error_code doConnect(boost::asio::ip::basic_endpoint<boost::asio::ip::tcp> endpoint) override;
+    void write(boost::asio::streambuf& buffer, WriteHandler&& write_handler) override;
+
+    /// @return the websocket
+    tcp_websocket& getWs();
+
+    /// TCP web socket
+    std::optional<tcp_websocket> tcp_ws_;
+    /// Receive buffer
+    boost::beast::flat_buffer buffer_;
+    /// protect tcp_ws_
+    std::mutex ws_mutex_;
+};
+
+
+#ifdef HAS_OPENSSL
+
+/// Websocket connection
+class ClientConnectionWss : public ClientConnection
+{
+public:
+    /// c'tor
+    ClientConnectionWss(boost::asio::io_context& io_context, boost::asio::ssl::context& ssl_context, ClientSettings::Server server);
+    /// d'tor
+    virtual ~ClientConnectionWss();
+
+    void disconnect() override;
+    std::string getMacAddress() override;
+    void getNextMessage(const MessageHandler<msg::BaseMessage>& handler) override;
+
+private:
+    boost::system::error_code doConnect(boost::asio::ip::basic_endpoint<boost::asio::ip::tcp> endpoint) override;
+    void write(boost::asio::streambuf& buffer, WriteHandler&& write_handler) override;
+
+    /// @return the websocket
+    ssl_websocket& getWs();
+
+    /// SSL context
+    boost::asio::ssl::context& ssl_context_;
+    /// SSL web socket
+    std::optional<ssl_websocket> ssl_ws_;
+    /// Receive buffer
+    boost::beast::flat_buffer buffer_;
+    /// protect ssl_ws_
+    std::mutex ws_mutex_;
+};
+
+#endif // HAS_OPENSSL

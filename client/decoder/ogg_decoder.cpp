@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2024  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,15 +16,25 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#include <cmath>
-#include <cstdint>
-#include <cstring>
-#include <iostream>
 
+// prototype/interface header file
+#include "ogg_decoder.hpp"
+
+// local headers
 #include "common/aixlog.hpp"
 #include "common/endian.hpp"
 #include "common/snap_exception.hpp"
-#include "ogg_decoder.hpp"
+
+// 3rd party headers
+
+// standard headers
+#ifndef HAS_TREMOR
+#include <cmath> // floor
+#endif
+#include <cstdint>
+#include <cstring>
+#include <string>
+
 
 
 using namespace std;
@@ -34,7 +44,7 @@ static constexpr auto LOG_TAG = "OggDecoder";
 namespace decoder
 {
 
-OggDecoder::OggDecoder() : Decoder()
+OggDecoder::OggDecoder()
 {
     ogg_sync_init(&oy); /* Now we can read pages */
 }
@@ -235,7 +245,6 @@ SampleFormat OggDecoder::setHeader(msg::CodecHeader* chunk)
         if (comment.find("SAMPLE_FORMAT=") == 0)
             sampleFormat_.setFormat(comment.substr(comment.find('=') + 1));
         LOG(INFO, LOG_TAG) << "comment: " << comment << "\n";
-        ;
         ++ptr;
     }
 

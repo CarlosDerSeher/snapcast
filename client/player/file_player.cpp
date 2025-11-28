@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,14 +16,19 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#include <cassert>
-#include <iostream>
+// prototype/interface header file
+#include "file_player.hpp"
 
+// local headers
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
 #include "common/utils/string_utils.hpp"
-#include "file_player.hpp"
+
+// 3rd party headers
+
+// standard headers
+
 
 using namespace std;
 
@@ -48,7 +53,7 @@ std::vector<PcmDevice> FilePlayer::pcm_list(const std::string& parameter)
 
 
 FilePlayer::FilePlayer(boost::asio::io_context& io_context, const ClientSettings::Player& settings, std::shared_ptr<Stream> stream)
-    : Player(io_context, settings, stream), timer_(io_context), file_(nullptr)
+    : Player(io_context, settings, std::move(stream)), timer_(io_context), file_(nullptr)
 {
     auto params = utils::string::split_pairs(settings.parameter, ',', '=');
     string filename;
@@ -81,7 +86,7 @@ FilePlayer::FilePlayer(boost::asio::io_context& io_context, const ClientSettings
 FilePlayer::~FilePlayer()
 {
     LOG(DEBUG, LOG_TAG) << "Destructor\n";
-    stop();
+    stop(); // NOLINT
 }
 
 
@@ -125,7 +130,8 @@ void FilePlayer::loop()
         next_request_ = now + 1ms;
 
     timer_.expires_at(next_request_);
-    timer_.async_wait([this](boost::system::error_code ec) {
+    timer_.async_wait([this](boost::system::error_code ec)
+    {
         if (ec)
             return;
         requestAudio();

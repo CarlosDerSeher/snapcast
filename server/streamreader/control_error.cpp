@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,7 +16,9 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "control_error.hpp"
+
 
 namespace snapcast::error::control
 {
@@ -24,10 +26,13 @@ namespace snapcast::error::control
 namespace detail
 {
 
+/// control error category
 struct category : public std::error_category
 {
 public:
+    /// @return category name
     const char* name() const noexcept override;
+    /// @return error message for @p value
     std::string message(int value) const override;
 };
 
@@ -85,7 +90,5 @@ const std::error_category& category()
 
 std::error_code make_error_code(ControlErrc errc)
 {
-    // Create an error_code with the original mpg123 error value
-    // and the mpg123 error category.
-    return std::error_code(static_cast<int>(errc), snapcast::error::control::category());
+    return {static_cast<int>(errc), snapcast::error::control::category()};
 }

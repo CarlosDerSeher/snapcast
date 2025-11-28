@@ -828,32 +828,32 @@ class MPRISInterface(dbus.service.Object):
         __root_interface: __root_props,
     }
 
-    @ dbus.service.method(__introspect_interface)
+    @dbus.service.method(__introspect_interface)
     def Introspect(self):
         return MPRIS2_INTROSPECTION
 
-    @ dbus.service.signal(__prop_interface, signature="sa{sv}as")
+    @dbus.service.signal(__prop_interface, signature="sa{sv}as")
     def PropertiesChanged(self, interface, changed_properties,
                           invalidated_properties):
         pass
 
-    @ dbus.service.method(__prop_interface,
-                          in_signature="ss", out_signature="v")
+    @dbus.service.method(__prop_interface,
+                         in_signature="ss", out_signature="v")
     def Get(self, interface, prop):
         getter, setter = self.__prop_mapping[interface][prop]
         if callable(getter):
             return getter()
         return getter
 
-    @ dbus.service.method(__prop_interface,
-                          in_signature="ssv", out_signature="")
+    @dbus.service.method(__prop_interface,
+                         in_signature="ssv", out_signature="")
     def Set(self, interface, prop, value):
         getter, setter = self.__prop_mapping[interface][prop]
         if setter is not None:
             setter(value)
 
-    @ dbus.service.method(__prop_interface,
-                          in_signature="s", out_signature="a{sv}")
+    @dbus.service.method(__prop_interface,
+                         in_signature="s", out_signature="a{sv}")
     def GetAll(self, interface):
         read_props = {}
         props = self.__prop_mapping[interface]
@@ -874,49 +874,49 @@ class MPRISInterface(dbus.service.Object):
         return value
 
     # Root methods
-    @ dbus.service.method(__root_interface, in_signature='', out_signature='')
+    @dbus.service.method(__root_interface, in_signature='', out_signature='')
     def Raise(self):
         logger.debug('Raise')
         webbrowser.open(url=f'http://{params["host"]}:{params["port"]}', new=1)
         return
 
-    @ dbus.service.method(__root_interface, in_signature='', out_signature='')
+    @dbus.service.method(__root_interface, in_signature='', out_signature='')
     def Quit(self):
         logger.debug('Quit')
         return
 
     # Player methods
-    @ dbus.service.method(__player_interface, in_signature='', out_signature='')
+    @dbus.service.method(__player_interface, in_signature='', out_signature='')
     def Next(self):
         snapcast_wrapper.control("next")
         return
 
-    @ dbus.service.method(__player_interface, in_signature='', out_signature='')
+    @dbus.service.method(__player_interface, in_signature='', out_signature='')
     def Previous(self):
         snapcast_wrapper.control("previous")
         return
 
-    @ dbus.service.method(__player_interface, in_signature='', out_signature='')
+    @dbus.service.method(__player_interface, in_signature='', out_signature='')
     def Pause(self):
         snapcast_wrapper.control("pause")
         return
 
-    @ dbus.service.method(__player_interface, in_signature='', out_signature='')
+    @dbus.service.method(__player_interface, in_signature='', out_signature='')
     def PlayPause(self):
         snapcast_wrapper.control("playPause")
         return
 
-    @ dbus.service.method(__player_interface, in_signature='', out_signature='')
+    @dbus.service.method(__player_interface, in_signature='', out_signature='')
     def Stop(self):
         snapcast_wrapper.control("stop")
         return
 
-    @ dbus.service.method(__player_interface, in_signature='', out_signature='')
+    @dbus.service.method(__player_interface, in_signature='', out_signature='')
     def Play(self):
         snapcast_wrapper.control("play")
         return
 
-    @ dbus.service.method(__player_interface, in_signature='x', out_signature='')
+    @dbus.service.method(__player_interface, in_signature='x', out_signature='')
     def Seek(self, offset):
         logger.debug(f'Seek {offset}')
         snapcast_wrapper.control("seek", {"offset": float(offset) / 1000000})
@@ -933,7 +933,7 @@ class MPRISInterface(dbus.service.Object):
         #     self.Seeked(position * 1000000)
         return
 
-    @ dbus.service.method(__player_interface, in_signature='ox', out_signature='')
+    @dbus.service.method(__player_interface, in_signature='ox', out_signature='')
     def SetPosition(self, trackid, position):
         logger.debug(f'setPosition trackId: {trackid}, position: {position}')
         snapcast_wrapper.control(
@@ -951,14 +951,14 @@ class MPRISInterface(dbus.service.Object):
         #     self.Seeked(position * 1000000)
         return
 
-    @ dbus.service.method(__player_interface, in_signature='', out_signature='')
+    @dbus.service.method(__player_interface, in_signature='', out_signature='')
     def OpenUri(self):
         logger.debug('OpenUri')
         # TODO
         return
 
     # Player signals
-    @ dbus.service.signal(__player_interface, signature='x')
+    @dbus.service.signal(__player_interface, signature='x')
     def Seeked(self, position):
         logger.debug(f'Seeked to {position}')
         snapcast_wrapper.properties['position'] = float(position) / 1000000
@@ -1016,7 +1016,7 @@ if __name__ == '__main__':
     try:
         (opts, args) = getopt.getopt(sys.argv[1:], 'dh:p:v',
                                      ['help', 'bus-name=',
-                                     'debug', 'host=', 'client='
+                                     'debug', 'host=', 'client=',
                                       'port=', 'version'])
     except getopt.GetoptError as ex:
         (msg, opt) = ex.args
@@ -1026,6 +1026,7 @@ if __name__ == '__main__':
         sys.exit(2)
 
     for (opt, arg) in opts:
+        print(f"opt: {opt}, arg: {arg}")
         if opt in ['--help']:
             usage(params)
             sys.exit()
@@ -1038,7 +1039,7 @@ if __name__ == '__main__':
         elif opt in ['-p', '--port']:
             params['port'] = int(arg)
         elif opt in ['--client']:
-            params['client'] = int(arg)
+            params['client'] = arg
         elif opt in ['-v', '--version']:
             v = __version__
             if __git_version__:

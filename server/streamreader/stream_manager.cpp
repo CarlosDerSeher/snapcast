@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -24,10 +24,14 @@
 #ifdef HAS_ALSA
 #include "alsa_stream.hpp"
 #endif
-#include "common/aixlog.hpp"
+#ifdef HAS_JACK
+#include "jack_stream.hpp"
+#endif
+#ifdef HAS_PIPEWIRE
+#include "pipewire_stream.hpp"
+#endif
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
-#include "common/utils.hpp"
 #include "file_stream.hpp"
 #include "librespot_stream.hpp"
 #include "meta_stream.hpp"
@@ -45,21 +49,21 @@ using namespace std;
 namespace streamreader
 {
 
-StreamManager::StreamManager(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& settings)
+StreamManager::StreamManager(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, ServerSettings settings)
     // const std::string& defaultSampleFormat, const std::string& defaultCodec, size_t defaultChunkBufferMs)
-    : pcmListener_(pcmListener), settings_(settings), ioc_(ioc)
+    : pcmListener_(pcmListener), settings_(std::move(settings)), io_context_(ioc)
 {
 }
 
 
-PcmStreamPtr StreamManager::addStream(const std::string& uri)
+PcmStreamPtr StreamManager::addStream(const std::string& uri, PcmStream::Source source)
 {
     StreamUri streamUri(uri);
-    return addStream(streamUri);
+    return addStream(streamUri, source);
 }
 
 
-PcmStreamPtr StreamManager::addStream(StreamUri& streamUri)
+PcmStreamPtr StreamManager::addStream(StreamUri& streamUri, PcmStream::Source source)
 {
     if (streamUri.query.find(kUriSampleFormat) == streamUri.query.end())
         streamUri.query[kUriSampleFormat] = settings_.stream.sampleFormat;
@@ -77,22 +81,23 @@ PcmStreamPtr StreamManager::addStream(StreamUri& streamUri)
     //		LOG(DEBUG) << "key: '" << kv.first << "' value: '" << kv.second << "'\n";
     PcmStreamPtr stream(nullptr);
 
+    PcmStream::Listener* listener = pcmListener_;
+    if ((streamUri.query[kUriCodec] == "null") && (streamUri.scheme != "meta"))
+    {
+        // Streams with null codec are "invisible" and will not report any updates to the listener.
+        // If the stream is used as input for a Meta stream, then the meta stream will add himself
+        // as another listener to the stream, so that updates are indirect reported through it.
+        listener = nullptr;
+    }
+
     if (streamUri.scheme == "pipe")
     {
-        stream = make_shared<PipeStream>(pcmListener_, ioc_, settings_, streamUri);
-    }
-    else if (streamUri.scheme == "file")
-    {
-        stream = make_shared<FileStream>(pcmListener_, ioc_, settings_, streamUri);
-    }
-    else if (streamUri.scheme == "process")
-    {
-        stream = make_shared<ProcessStream>(pcmListener_, ioc_, settings_, streamUri);
+        stream = make_shared<PipeStream>(listener, io_context_, settings_, streamUri, source);
     }
 #ifdef HAS_ALSA
     else if (streamUri.scheme == "alsa")
     {
-        stream = make_shared<AlsaStream>(pcmListener_, ioc_, settings_, streamUri);
+        stream = make_shared<AlsaStream>(listener, io_context_, settings_, streamUri, source);
     }
 #endif
     else if ((streamUri.scheme == "spotify") || (streamUri.scheme == "librespot"))
@@ -101,7 +106,7 @@ PcmStreamPtr StreamManager::addStream(StreamUri& streamUri)
         // that all constructors of all parent classes also use the overwritten sample
         // format.
         streamUri.query[kUriSampleFormat] = "44100:16:2";
-        stream = make_shared<LibrespotStream>(pcmListener_, ioc_, settings_, streamUri);
+        stream = make_shared<LibrespotStream>(listener, io_context_, settings_, streamUri, source);
     }
     else if (streamUri.scheme == "airplay")
     {
@@ -109,15 +114,35 @@ PcmStreamPtr StreamManager::addStream(StreamUri& streamUri)
         // that all constructors of all parent classes also use the overwritten sample
         // format.
         streamUri.query[kUriSampleFormat] = "44100:16:2";
-        stream = make_shared<AirplayStream>(pcmListener_, ioc_, settings_, streamUri);
+        stream = make_shared<AirplayStream>(listener, io_context_, settings_, streamUri, source);
+    }
+    else if (streamUri.scheme == "file")
+    {
+        stream = make_shared<FileStream>(listener, io_context_, settings_, streamUri, source);
+    }
+    else if (streamUri.scheme == "process")
+    {
+        stream = make_shared<ProcessStream>(listener, io_context_, settings_, streamUri, source);
     }
     else if (streamUri.scheme == "tcp")
     {
-        stream = make_shared<TcpStream>(pcmListener_, ioc_, settings_, streamUri);
+        stream = make_shared<TcpStream>(listener, io_context_, settings_, streamUri, source);
     }
+#ifdef HAS_PIPEWIRE
+    else if (streamUri.scheme == "pipewire")
+    {
+        stream = make_shared<PipeWireStream>(listener, io_context_, settings_, streamUri, source);
+    }
+#endif
+#ifdef HAS_JACK
+    else if (streamUri.scheme == "jack")
+    {
+        stream = make_shared<JackStream>(listener, io_context_, settings_, streamUri, source);
+    }
+#endif
     else if (streamUri.scheme == "meta")
     {
-        stream = make_shared<MetaStream>(pcmListener_, streams_, ioc_, settings_, streamUri);
+        stream = make_shared<MetaStream>(listener, streams_, io_context_, settings_, streamUri, source);
     }
     else
     {
@@ -149,13 +174,13 @@ void StreamManager::removeStream(const std::string& name)
 }
 
 
-const std::vector<PcmStreamPtr>& StreamManager::getStreams()
+const std::vector<PcmStreamPtr>& StreamManager::getStreams() const
 {
     return streams_;
 }
 
 
-const PcmStreamPtr StreamManager::getDefaultStream()
+const PcmStreamPtr StreamManager::getDefaultStream() const
 {
     if (streams_.empty())
         return nullptr;
@@ -169,7 +194,7 @@ const PcmStreamPtr StreamManager::getDefaultStream()
 }
 
 
-const PcmStreamPtr StreamManager::getStream(const std::string& id)
+const PcmStreamPtr StreamManager::getStream(const std::string& id) const
 {
     for (auto stream : streams_)
     {
@@ -210,8 +235,11 @@ json StreamManager::toJson() const
 {
     json result = json::array();
     for (const auto& stream : streams_)
+    {
+        // A stream with "null" codec will only serve as input for a meta stream, i.e. is not a "stand alone" stream
         if (stream->getCodec() != "null")
             result.push_back(stream->toJson());
+    }
     return result;
 }
 

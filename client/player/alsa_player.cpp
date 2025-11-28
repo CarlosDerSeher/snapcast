@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,12 +16,22 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
+// prototype/interface header file
 #include "alsa_player.hpp"
+
+// local headers
 #include "common/aixlog.hpp"
 #include "common/snap_exception.hpp"
 #include "common/str_compat.hpp"
 #include "common/utils/logging.hpp"
 #include "common/utils/string_utils.hpp"
+
+// 3rd party headers
+
+// standard headers
+#include <chrono>
+#include <cmath>
+
 
 using namespace std::chrono_literals;
 using namespace std;
@@ -33,7 +43,7 @@ static constexpr std::chrono::milliseconds BUFFER_TIME = 80ms;
 static constexpr int PERIODS = 4;
 static constexpr int MIN_PERIODS = 3;
 
-#define exp10(x) (exp((x)*log(10)))
+#define exp10(x) (exp((x) * log(10)))
 
 
 static constexpr auto LOG_TAG = "Alsa";
@@ -41,7 +51,7 @@ static constexpr auto DEFAULT_MIXER = "PCM";
 
 
 AlsaPlayer::AlsaPlayer(boost::asio::io_context& io_context, const ClientSettings::Player& settings, std::shared_ptr<Stream> stream)
-    : Player(io_context, settings, stream), handle_(nullptr), ctl_(nullptr), mixer_(nullptr), elem_(nullptr), sd_(io_context), timer_(io_context)
+    : Player(io_context, settings, std::move(stream)), handle_(nullptr), ctl_(nullptr), mixer_(nullptr), elem_(nullptr), sd_(io_context), timer_(io_context)
 {
     if (settings_.mixer.mode == ClientSettings::Mixer::Mode::hardware)
     {
@@ -82,40 +92,40 @@ AlsaPlayer::AlsaPlayer(boost::asio::io_context& io_context, const ClientSettings
 }
 
 
-void AlsaPlayer::setHardwareVolume(double volume, bool muted)
+void AlsaPlayer::setHardwareVolume(const Volume& volume)
 {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(rec_mutex_);
     if (elem_ == nullptr)
         return;
 
     last_change_ = std::chrono::steady_clock::now();
     try
     {
-        int val = muted ? 0 : 1;
+        int val = volume.mute ? 0 : 1;
         int err = snd_mixer_selem_set_playback_switch_all(elem_, val);
         if (err < 0)
             LOG(ERROR, LOG_TAG) << "Failed to mute, error: " << snd_strerror(err) << "\n";
 
         long minv, maxv;
-        if ((err = snd_mixer_selem_get_playback_dB_range(elem_, &minv, &maxv)) == 0)
+        if (err = snd_mixer_selem_get_playback_dB_range(elem_, &minv, &maxv); err == 0)
         {
             double min_norm = exp10((minv - maxv) / 6000.0);
-            volume = volume * (1 - min_norm) + min_norm;
-            double mixer_volume = 6000.0 * log10(volume) + maxv;
+            double vol = volume.volume * (1 - min_norm) + min_norm;
+            double mixer_volume = 6000.0 * log10(vol) + maxv;
 
-            LOG(DEBUG, LOG_TAG) << "Mixer playback dB range [" << minv << ", " << maxv << "], volume: " << volume << ", mixer volume: " << mixer_volume << "\n";
-            if ((err = snd_mixer_selem_set_playback_dB_all(elem_, mixer_volume, 0)) < 0)
+            LOG(DEBUG, LOG_TAG) << "Mixer playback dB range [" << minv << ", " << maxv << "], volume: " << vol << ", mixer volume: " << mixer_volume << "\n";
+            if (err = snd_mixer_selem_set_playback_dB_all(elem_, mixer_volume, 0); err < 0)
                 throw SnapException(std::string("Failed to set playback volume, error: ") + snd_strerror(err));
         }
         else
         {
-            if ((err = snd_mixer_selem_get_playback_volume_range(elem_, &minv, &maxv)) < 0)
+            if (err = snd_mixer_selem_get_playback_volume_range(elem_, &minv, &maxv); err < 0)
                 throw SnapException(std::string("Failed to get playback volume range, error: ") + snd_strerror(err));
 
-            auto mixer_volume = volume * (maxv - minv) + minv;
-            LOG(DEBUG, LOG_TAG) << "Mixer playback volume range [" << minv << ", " << maxv << "], volume: " << volume << ", mixer volume: " << mixer_volume
-                                << "\n";
-            if ((err = snd_mixer_selem_set_playback_volume_all(elem_, mixer_volume)) < 0)
+            auto mixer_volume = volume.volume * (maxv - minv) + minv;
+            LOG(DEBUG, LOG_TAG) << "Mixer playback volume range [" << minv << ", " << maxv << "], volume: " << volume.volume
+                                << ", mixer volume: " << mixer_volume << "\n";
+            if (err = snd_mixer_selem_set_playback_volume_all(elem_, mixer_volume); err < 0)
                 throw SnapException(std::string("Failed to set playback volume, error: ") + snd_strerror(err));
         }
     }
@@ -127,11 +137,11 @@ void AlsaPlayer::setHardwareVolume(double volume, bool muted)
 }
 
 
-bool AlsaPlayer::getHardwareVolume(double& volume, bool& muted)
+bool AlsaPlayer::getHardwareVolume(Volume& volume)
 {
     try
     {
-        std::lock_guard<std::recursive_mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(rec_mutex_);
         if (elem_ == nullptr)
             throw SnapException("Mixer not initialized");
 
@@ -140,34 +150,35 @@ bool AlsaPlayer::getHardwareVolume(double& volume, bool& muted)
         while (snd_mixer_handle_events(mixer_) > 0)
             this_thread::sleep_for(1us);
         long minv, maxv;
-        if ((err = snd_mixer_selem_get_playback_dB_range(elem_, &minv, &maxv)) == 0)
+        if (err = snd_mixer_selem_get_playback_dB_range(elem_, &minv, &maxv); err == 0)
         {
-            if ((err = snd_mixer_selem_get_playback_dB(elem_, SND_MIXER_SCHN_MONO, &vol)) < 0)
+            if (err = snd_mixer_selem_get_playback_dB(elem_, SND_MIXER_SCHN_MONO, &vol); err < 0)
                 throw SnapException(std::string("Failed to get playback volume, error: ") + snd_strerror(err));
 
-            volume = pow(10, (vol - maxv) / 6000.0);
+            volume.volume = pow(10, (vol - maxv) / 6000.0);
             if (minv != SND_CTL_TLV_DB_GAIN_MUTE)
             {
                 double min_norm = pow(10, (minv - maxv) / 6000.0);
-                volume = (volume - min_norm) / (1 - min_norm);
+                volume.volume = (volume.volume - min_norm) / (1 - min_norm);
             }
         }
         else
         {
-            if ((err = snd_mixer_selem_get_playback_volume_range(elem_, &minv, &maxv)) < 0)
+            if (err = snd_mixer_selem_get_playback_volume_range(elem_, &minv, &maxv); err < 0)
                 throw SnapException(std::string("Failed to get playback volume range, error: ") + snd_strerror(err));
-            if ((err = snd_mixer_selem_get_playback_volume(elem_, SND_MIXER_SCHN_MONO, &vol)) < 0)
+            if (err = snd_mixer_selem_get_playback_volume(elem_, SND_MIXER_SCHN_MONO, &vol); err < 0)
                 throw SnapException(std::string("Failed to get playback volume, error: ") + snd_strerror(err));
 
             vol -= minv;
             maxv = maxv - minv;
-            volume = static_cast<double>(vol) / static_cast<double>(maxv);
+            volume.volume = static_cast<double>(vol) / static_cast<double>(maxv);
         }
         int val;
-        if ((err = snd_mixer_selem_get_playback_switch(elem_, SND_MIXER_SCHN_MONO, &val)) < 0)
+        if (err = snd_mixer_selem_get_playback_switch(elem_, SND_MIXER_SCHN_MONO, &val); err < 0)
             throw SnapException(std::string("Failed to get mute state, error: ") + snd_strerror(err));
-        muted = (val == 0);
-        LOG(DEBUG, LOG_TAG) << "Get volume, mixer volume range [" << minv << ", " << maxv << "], volume: " << volume << ", muted: " << muted << "\n";
+        volume.mute = (val == 0);
+        LOG(DEBUG, LOG_TAG) << "Get volume, mixer volume range [" << minv << ", " << maxv << "], volume: " << volume.volume << ", muted: " << volume.mute
+                            << "\n";
         snd_mixer_handle_events(mixer_);
         return true;
     }
@@ -181,7 +192,8 @@ bool AlsaPlayer::getHardwareVolume(double& volume, bool& muted)
 
 void AlsaPlayer::waitForEvent()
 {
-    sd_.async_wait(boost::asio::posix::stream_descriptor::wait_read, [this](const boost::system::error_code& ec) {
+    sd_.async_wait(boost::asio::posix::stream_descriptor::wait_read, [this](const boost::system::error_code& ec)
+    {
         if (ec)
         {
             // TODO: fd is "Bad" after unplugging/plugging USB DAC, i.e. after init/uninit/init cycle
@@ -189,7 +201,7 @@ void AlsaPlayer::waitForEvent()
             return;
         }
 
-        std::lock_guard<std::recursive_mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(rec_mutex_);
         if (ctl_ == nullptr)
             return;
 
@@ -214,13 +226,14 @@ void AlsaPlayer::waitForEvent()
                 // As workaround we defer getting the volume by 20ms.
                 timer_.cancel();
                 timer_.expires_after(20ms);
-                timer_.async_wait([this](const boost::system::error_code& ec) {
+                timer_.async_wait([this](const boost::system::error_code& ec)
+                {
                     if (!ec)
                     {
-                        if (getHardwareVolume(volume_, muted_))
+                        if (getHardwareVolume(volume_))
                         {
-                            LOG(DEBUG, LOG_TAG) << "Volume changed: " << volume_ << ", muted: " << muted_ << "\n";
-                            notifyVolumeChange(volume_, muted_);
+                            LOG(DEBUG, LOG_TAG) << "Volume changed: " << volume_.volume << ", muted: " << volume_.mute << "\n";
+                            notifyVolumeChange(volume_);
                         }
                     }
                 });
@@ -236,13 +249,14 @@ void AlsaPlayer::initMixer()
         return;
 
     LOG(DEBUG, LOG_TAG) << "initMixer\n";
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(rec_mutex_);
     int err;
-    if ((err = snd_ctl_open(&ctl_, mixer_device_.c_str(), SND_CTL_READONLY)) < 0)
+    if (err = snd_ctl_open(&ctl_, mixer_device_.c_str(), SND_CTL_READONLY); err < 0)
         throw SnapException("Can't open control for " + mixer_device_ + ", error: " + snd_strerror(err));
-    if ((err = snd_ctl_subscribe_events(ctl_, 1)) < 0)
+    if (err = snd_ctl_subscribe_events(ctl_, 1); err < 0)
         throw SnapException("Can't subscribe for events for " + mixer_device_ + ", error: " + snd_strerror(err));
-    fd_ = std::unique_ptr<pollfd, std::function<void(pollfd*)>>(new pollfd(), [](pollfd* p) {
+    fd_ = std::unique_ptr<pollfd, std::function<void(pollfd*)>>(new pollfd(), [](pollfd* p)
+    {
         close(p->fd);
         delete p;
     });
@@ -257,13 +271,13 @@ void AlsaPlayer::initMixer()
     snd_mixer_selem_id_set_index(sid, mix_index);
     snd_mixer_selem_id_set_name(sid, mixer_name_.c_str());
 
-    if ((err = snd_mixer_open(&mixer_, 0)) < 0)
+    if (err = snd_mixer_open(&mixer_, 0); err < 0)
         throw SnapException(std::string("Failed to open mixer, error: ") + snd_strerror(err));
-    if ((err = snd_mixer_attach(mixer_, mixer_device_.c_str())) < 0)
+    if (err = snd_mixer_attach(mixer_, mixer_device_.c_str()); err < 0)
         throw SnapException("Failed to attach mixer to " + mixer_device_ + ", error: " + snd_strerror(err));
-    if ((err = snd_mixer_selem_register(mixer_, nullptr, nullptr)) < 0)
+    if (err = snd_mixer_selem_register(mixer_, nullptr, nullptr); err < 0)
         throw SnapException(std::string("Failed to register selem, error: ") + snd_strerror(err));
-    if ((err = snd_mixer_load(mixer_)) < 0)
+    if (err = snd_mixer_load(mixer_); err < 0)
         throw SnapException(std::string("Failed to load mixer, error: ") + snd_strerror(err));
     elem_ = snd_mixer_find_selem(mixer_, sid);
     if (elem_ == nullptr)
@@ -276,7 +290,7 @@ void AlsaPlayer::initMixer()
 
 void AlsaPlayer::initAlsa()
 {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(rec_mutex_);
 
     const SampleFormat& format = stream_->getFormat();
     uint32_t rate = format.rate();
@@ -284,7 +298,7 @@ void AlsaPlayer::initAlsa()
     int err;
 
     // Open the PCM device in playback mode
-    if ((err = snd_pcm_open(&handle_, settings_.pcm_device.name.c_str(), SND_PCM_STREAM_PLAYBACK, 0)) < 0)
+    if (err = snd_pcm_open(&handle_, settings_.pcm_device.name.c_str(), SND_PCM_STREAM_PLAYBACK, 0); err < 0)
         throw SnapException("Can't open " + settings_.pcm_device.name + ", error: " + snd_strerror(err), err);
 
     // struct snd_pcm_playback_info_t pinfo;
@@ -295,7 +309,7 @@ void AlsaPlayer::initAlsa()
     // Allocate parameters object and fill it with default values
     snd_pcm_hw_params_t* params;
     snd_pcm_hw_params_alloca(&params);
-    if ((err = snd_pcm_hw_params_any(handle_, params)) < 0)
+    if (err = snd_pcm_hw_params_any(handle_, params); err < 0)
         throw SnapException("Can't fill params: " + string(snd_strerror(err)));
 
     snd_output_t* output;
@@ -311,7 +325,7 @@ void AlsaPlayer::initAlsa()
     }
 
     // Set parameters
-    if ((err = snd_pcm_hw_params_set_access(handle_, params, SND_PCM_ACCESS_RW_INTERLEAVED)) < 0)
+    if (err = snd_pcm_hw_params_set_access(handle_, params, SND_PCM_ACCESS_RW_INTERLEAVED); err < 0)
         throw SnapException("Can't set interleaved mode: " + string(snd_strerror(err)));
 
     snd_pcm_format_t snd_pcm_format;
@@ -354,17 +368,17 @@ void AlsaPlayer::initAlsa()
         throw SnapException(ss.str());
     }
 
-    if ((err = snd_pcm_hw_params_set_channels(handle_, params, channels)) < 0)
+    if (err = snd_pcm_hw_params_set_channels(handle_, params, channels); err < 0)
         throw SnapException("Can't set channel count: " + string(snd_strerror(err)));
 
-    if ((err = snd_pcm_hw_params_set_rate_near(handle_, params, &rate, nullptr)) < 0)
+    if (err = snd_pcm_hw_params_set_rate_near(handle_, params, &rate, nullptr); err < 0)
         throw SnapException("Can't set rate: " + string(snd_strerror(err)));
     if (rate != format.rate())
         LOG(WARNING, LOG_TAG) << "Could not set sample rate to " << format.rate() << " Hz, using: " << rate << " Hz\n";
 
     uint32_t period_time = buffer_time_.value_or(BUFFER_TIME).count() / periods_.value_or(PERIODS);
     uint32_t max_period_time = period_time;
-    if ((err = snd_pcm_hw_params_get_period_time_max(params, &max_period_time, nullptr)) < 0)
+    if (err = snd_pcm_hw_params_get_period_time_max(params, &max_period_time, nullptr); err < 0)
     {
         LOG(ERROR, LOG_TAG) << "Can't get max period time: " << snd_strerror(err) << "\n";
     }
@@ -377,7 +391,7 @@ void AlsaPlayer::initAlsa()
         }
     }
     uint32_t min_period_time = period_time;
-    if ((err = snd_pcm_hw_params_get_period_time_min(params, &min_period_time, nullptr)) < 0)
+    if (err = snd_pcm_hw_params_get_period_time_min(params, &min_period_time, nullptr); err < 0)
     {
         LOG(ERROR, LOG_TAG) << "Can't get min period time: " << snd_strerror(err) << "\n";
     }
@@ -390,7 +404,7 @@ void AlsaPlayer::initAlsa()
         }
     }
 
-    if ((err = snd_pcm_hw_params_set_period_time_near(handle_, params, &period_time, nullptr)) < 0)
+    if (err = snd_pcm_hw_params_set_period_time_near(handle_, params, &period_time, nullptr); err < 0)
         throw SnapException("Can't set period time: " + string(snd_strerror(err)));
 
     uint32_t buffer_time = buffer_time_.value_or(BUFFER_TIME).count();
@@ -402,15 +416,15 @@ void AlsaPlayer::initAlsa()
         buffer_time = period_time * periods;
     }
 
-    if ((err = snd_pcm_hw_params_set_buffer_time_near(handle_, params, &buffer_time, nullptr)) < 0)
+    if (err = snd_pcm_hw_params_set_buffer_time_near(handle_, params, &buffer_time, nullptr); err < 0)
         throw SnapException("Can't set buffer time to " + cpt::to_string(buffer_time) + " us : " + string(snd_strerror(err)));
 
     // unsigned int periods = periods_;
-    // if ((err = snd_pcm_hw_params_set_periods_near(handle_, params, &periods, 0)) < 0)
+    // if (err = snd_pcm_hw_params_set_periods_near(handle_, params, &periods, 0); err < 0)
     //     throw SnapException("Can't set periods: " + string(snd_strerror(err)));
 
     // Write parameters
-    if ((err = snd_pcm_hw_params(handle_, params)) < 0)
+    if (err = snd_pcm_hw_params(handle_, params); err < 0)
         throw SnapException("Can't set hardware parameters: " + string(snd_strerror(err)));
 
     // Resume information
@@ -434,7 +448,7 @@ void AlsaPlayer::initAlsa()
 
     if (snd_pcm_state(handle_) == SND_PCM_STATE_PREPARED)
     {
-        if ((err = snd_pcm_start(handle_)) < 0)
+        if (err = snd_pcm_start(handle_); err < 0)
             LOG(DEBUG, LOG_TAG) << "Failed to start PCM: " << snd_strerror(err) << "\n";
     }
 
@@ -445,7 +459,7 @@ void AlsaPlayer::initAlsa()
 
 void AlsaPlayer::uninitAlsa(bool uninit_mixer)
 {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(rec_mutex_);
     if (uninit_mixer)
         uninitMixer();
 
@@ -464,7 +478,7 @@ void AlsaPlayer::uninitMixer()
         return;
 
     LOG(DEBUG, LOG_TAG) << "uninitMixer\n";
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(rec_mutex_);
     if (sd_.is_open())
     {
         boost::system::error_code ec;
@@ -505,7 +519,7 @@ void AlsaPlayer::start()
 
 AlsaPlayer::~AlsaPlayer()
 {
-    stop();
+    stop(); // NOLINT
 }
 
 
@@ -567,11 +581,11 @@ void AlsaPlayer::worker()
                 initAlsa();
                 // set the hardware volume. It might have changed when we were not initialized
                 if (settings_.mixer.mode == ClientSettings::Mixer::Mode::hardware)
-                    setHardwareVolume(volume_, muted_);
+                    setHardwareVolume(volume_);
             }
             catch (const std::exception& e)
             {
-                LOG(ERROR, LOG_TAG) << "Exception in initAlsa: " << e.what() << endl;
+                LOG(ERROR, LOG_TAG) << "Exception in initAlsa: " << e.what() << "\n";
                 chronos::sleep(100);
             }
             if (handle_ == nullptr)
@@ -645,6 +659,7 @@ void AlsaPlayer::worker()
             LOG(INFO, LOG_TAG) << "Failed to get chunk\n";
             while (active_ && !stream_->waitForChunk(100ms))
             {
+                // Log "Waiting for chunk" only every second second
                 static utils::logging::TimeConditional cond(2s);
                 LOG(DEBUG, LOG_TAG) << cond << "Waiting for chunk\n";
                 if ((handle_ != nullptr) && (chronos::getTickCount() - lastChunkTick > 5000))

@@ -1,5 +1,282 @@
 # Snapcast changelog
 
+## Version 0.34.0
+
+### Features
+
+- CI: Build packages for Raspberry Pi OS trixie (Issue #1429)
+
+### Bugfixes
+
+- Fix file utils include (PR #1447)
+- Fix pipewire / jack mixup in documentation (PR #1450)
+
+### General
+
+- Snapweb: Update to v0.9.2
+
+### Contributors
+
+- @badaix
+- @djmaze
+- @W-Floyd
+
+_Johannes Pohl <snapcast@badaix.de>  Thu, 02 Oct 2025 00:13:37 +0200_
+
+## Version 0.33.0
+
+### Features
+
+- Server: Add PipeWire stream reader (PR #1418, Issue #1371)
+- Client: Add PipeWire player (PR #1420, Issue #1419, #821)
+- Server: process stream sources can be added via RPC (Issue #1359, PR #1444)
+- Server: mDNS can be disabled (Issue #1172, PR #1437)
+- Server: Audio streaming over plain TCP (port 1704) can be disabled (PR #1437)
+- Server: Add control script for `go-librespot` (PR #1433, Issue #1424)
+
+### Bugfixes
+
+- Client: Fix case of command line arguments (Issue #1411)
+- Client: Fix deadlock during shutdown (PR #1415)
+- Fix building with boost v1.89.0 (Issues #1413)
+- Fix MacOS CI (PR #1446)
+
+### General
+
+- Server: Log warning if default config is missing (PR #1402)
+- Server: Make SSL support optional (`-DBUILD_WITH_SSL`) (Issue #1426, PR #1427)
+- Make ALSA optional (PR #1422)
+- Enable OpenSSL support for Android builds in `CMakeLists.txt` (PR #1373)
+- Update Readme (PR #1431)
+- Build Trixie packages for amd64 (Issue #1429)
+- `tcp` section in `snapserver.conf` renamed to `tcp-control` (PR #1437)
+- TCP streaming settings moved from `stream` to `tcp-streaming` (PR #1437)
+
+### Contributors
+
+- @badaix
+- @mafrosis
+- @aanno
+- @filmor
+- @sajjadsabzkar
+- @MickMorley
+- @lucianm
+
+_Johannes Pohl <snapcast@badaix.de>  Tue, 23 Sep 2025 00:13:37 +0200_
+
+## Version 0.32.3
+
+### Features
+
+### Bugfixes
+
+- Server: re-add port to host in json RPC stream requests (Issue #1410)
+- Documentation: Update Windows build instructions (PR #1408)
+
+### General
+
+### Contributors
+
+- @stijnvdb88
+- @badaix
+
+_Johannes Pohl <snapcast@badaix.de>  Fri, 08 Aug 2025 00:13:37 +0200_
+
+## Version 0.32.2
+
+### Bugfixes
+
+- Fix building Snapclient debian package with Pulse audio (Issue #1406)
+
+### Contributors
+
+- @badaix
+
+_Johannes Pohl <snapcast@badaix.de>  Tue, 05 Aug 2025 00:13:37 +0200_
+
+## Version 0.32.1
+
+### Bugfixes
+
+- Add OpenSSL dlls to Windows bundle (Issue #1405)
+
+### Contributors
+
+- @badaix
+
+_Johannes Pohl <snapcast@badaix.de>  Mon, 04 Aug 2025 00:13:37 +0200_
+
+## Version 0.32.0
+
+### Features
+
+- Client: Add support for (secure-) websockets (Issue #1325, PR #1340)
+- Server: Add client certificate validation (Issue #1334)
+- Server: Add control script for Plex (PR #1346)
+
+### Bugfixes
+
+- Fix typos (PR #1333, PR #1341, PR #1345)
+- Add `mpv` option `--ao-pcm-waveheader=no` on player setup page (Issue #1094)
+- Fix clang-tidy static analysis issues (Issue #1354)
+- Fix building with Jack on Fedora (Issue #1363)
+- Snapserver silently ignores if config file cannot be read (Issue #1402) 
+- Add required packages to build instructions (Issue #1397)
+- Fix stream URI string encoding (PR #1398)
+- Fix reading port for TCP streams (PR #1399)
+
+### General
+
+- Snapweb: Update to v0.9.1
+- Client: Command line arguments '--host' and '--port' are deprecated
+- Update binary_protocol.md (Issue #1339)
+- Add missing doxygen code documentation (Issue #1352)
+- Add clang-tidy static analysis to CI (Issue #1353)
+- Compiles with boost v1.88.0 (Issue #1367, PR #1378, PR #1387)
+- Add Music Assistant project to readme (PR #1366)
+ 
+### Contributors
+
+- @chicco-carone
+- @rnestler
+- @badaix
+- @chriscn
+- @SantiagoSotoC
+- @tobster
+- @gnumpi
+
+_Johannes Pohl <snapcast@badaix.de>  Sun, 03 Aug 2025 00:13:37 +0200_
+
+## Version 0.31.0
+
+### Features
+
+- Server: Add secure RPC method `Stream.AddStream` (PR #1331, Issue #1330)
+- Server: Re-add RPC method `RemoveStream` (Issue #1330)
+
+### Bugfixes
+
+- Fix crash when calling `Stream.RemoveStream`
+- Fix typo in `changelog.md` (PR #1328)
+- Fix typo in `configuration.md` (PR #1329)
+- Update to AixLog v1.5.1, flushing log lines (PR #1332)
+
+### General
+
+- Add more doxygen documentation
+
+_Johannes Pohl <snapcast@badaix.de>  Thu, 23 Jan 2025 00:13:37 +0200_
+
+## Version 0.30.0
+
+### Features
+
+- Server: Add support for HTTPS and WSS (Issue #1322)
+- Server: custom URL prefix for HTTP URLs (PR #1260)
+- Server: listen to both IPv4 and IPv6 for incoming connections (PR #1290)
+
+### Bugfixes
+
+- Fix CVE-2023-36177: Remove "AddStream" and "RemoveStream" RPC (Issue #1327)
+- Fix compile error on MacOS
+- Remove PiMusicBox from readme (Issue ##1304)
+- Add missing include (Issue #1295)
+- Fix building with boost v1.87.0 (Issues #1305, #1306, #1307, PR #1308)
+- Log tag is missing in syslog (Issue #1276)
+
+### General
+
+- CI: execute unit tests (asan and tsan)
+- CI: create doxygen documentation
+- CI: compile release and debug builds
+- Code cleanup
+- Add more doxygen documentation
+
+_Johannes Pohl <snapcast@badaix.de>  Fri, 17 Jan 2025 00:13:37 +0200_
+
+## Version 0.29.0
+
+### Features
+
+- Server: Add support for Jack streams (PR #1241, Issue #644)
+- Client: Add support for 24 and 32 bit audio on Android
+
+### Bugfixes
+
+- Fix linker paths on ARM based MacOS
+
+### General
+
+- Snapweb: Update to v0.8.0
+- CI: Add clang 16, 17, 18, gcc 14, xcode 15.1, 15.2, 15.3, 15.4
+- CI: Create GitHub draft release
+
+_Johannes Pohl <snapcast@badaix.de>  Sun, 25 Aug 2024 00:13:37 +0200_
+
+## Version 0.28.0
+
+### Features
+
+- Server: Use filename as title for FileStreams
+- Client: Loop through resolved server IPs during connect (Issue #1216)
+
+### Bugfixes
+
+- Server: Fix noise caused by reading half samples (Issue #1170)
+- Server: Check open syscall error in PipeStream::do_connect (PR #1150)
+- Server: Tweak Airplay support (#1102)
+- Server: Lower log severity for shairport-sync (Issue #891)
+- Server: Emits notifications for streams with codec=null (Is11sue #1205)
+- Server: Fix delayed switching of meta streams (Issue #1187)
+- Server: Mixer script calls piling up (Issue #1174)
+- Server: Mixer script creates zombie processes (Issue #1157)
+- Improve connect handling in meta_mopidy.py
+- Improve connect handling in meta_librespot-java.py
+- Fix cppcheck issues
+
+### General
+
+- CI: Build debian bookworm and bullseye packages for amd64, arm and arm64
+- CI: Add cppcheck static analysis
+- Update documentation (PR #1130, PR #1067)
+- Delete deprecated Makefiles, CMake is the only supported buildsystem
+- Snapweb: Update to v0.7.0
+
+_Johannes Pohl <snapcast@badaix.de>  Fri, 19 Apr 2024 00:13:37 +0200_
+
+## Version 0.27.0
+
+### Features
+
+- Server: Configurable default volume for new clients (Issue #910, PR #1024)
+- Server: New control script for mopidy: meta_mopidy.py
+- Server: New control script for librespot java: meta_librespot-java.py
+- Server: Add "mute" stream property
+
+### Bugfixes
+
+- Server: Fix random crash with meta stream (Issue #966)
+- Server: Fix compatibility with librespot 0.5-dev (Issue #1063, #1074, #1042)
+- Server: Not terminate on malformed json messages (Issue #1049)
+- Server: Fix random segfault (Issue #1047)
+- Server: Fix growing delay on input stream (Issue #1014)
+- Server: Fix segfault with Librespot on Alpine (Issue #1026)
+- Server: meta_mpd.py is installed with 755 (Issue #1021, #970)
+- Server: Add list of dependecies to meta_mpd.py (Issue #971)
+- Server: meta_mpd.py stopped working (Issue #997)
+- Client: Not terminate if codec is "null" (Issue #1076)
+- Fix test failures (Issue #961)
+
+### General
+
+- Fix compilation on macOS with Xcode 13.4.1 (Issue #1028)
+- Fix compilation with boost 1.81.0 (Issue #1082)
+- Remove debhelper files from project (moved to SnapOS project)
+- SnapOs uses containers to build deb packages (solves Issue #968)
+- Snapweb: Update to v0.5.0
+
+_Johannes Pohl <snapcast@badaix.de>  Sun, 05 Feb 2023 00:13:37 +0200_
+
 ## Version 0.26.0
 
 ### Features
@@ -133,7 +410,7 @@ _Johannes Pohl <snapcast@badaix.de>  Thu, 15 Oct 2020 00:13:37 +0200_
 
 ### General
 
-- debian packag generation switched from make to CMake buildsystem
+- debian package generation switched from make to CMake buildsystem
 - Reintroduce MACOS define, hopefully not breaking anything on macOS
 - Snapcast uses GitHub actions for automated CI/CD
 - CMake installs man files (Issue #507)
@@ -705,7 +982,7 @@ _Johannes Pohl <snapcast@badaix.de>  Wed, 26 Aug 2015 12:00:00 +0200_
 - Code clean up
 - Refactored encoding for lower latency
 
-_Johannes Pohl <snapcast@badaix.de>  Sun, 16 Aug 2015 19:25:51 +0100
+_Johannes Pohl <snapcast@badaix.de>  Sun, 16 Aug 2015 19:25:51 +0100_
 
 ## Version 0.2.1
 
@@ -713,4 +990,4 @@ _Johannes Pohl <snapcast@badaix.de>  Sun, 16 Aug 2015 19:25:51 +0100
 
 - Arch Linux compatibility
 
-_Johannes Pohl <snapcast@badaix.de>  Fri, 24 Jul 2015 15:47:00 +0100
+_Johannes Pohl <snapcast@badaix.de>  Fri, 24 Jul 2015 15:47:00 +0100_

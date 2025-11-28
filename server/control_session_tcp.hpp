@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2024  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,14 +16,22 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef CONTROL_SESSION_TCP_HPP
-#define CONTROL_SESSION_TCP_HPP
+#pragma once
 
+
+// local headers
 #include "control_session.hpp"
+
+// 3rd party headers
+#include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/strand.hpp>
+#include <boost/asio/streambuf.hpp>
+
+// standard headers
 #include <deque>
 
 using boost::asio::ip::tcp;
-namespace net = boost::asio;
 
 /// Endpoint for a connected control client.
 /**
@@ -35,7 +43,7 @@ class ControlSessionTcp : public ControlSession
 {
 public:
     /// ctor. Received message from the client are passed to ControlMessageReceiver
-    ControlSessionTcp(ControlMessageReceiver* receiver, tcp::socket&& socket);
+    ControlSessionTcp(ControlMessageReceiver* receiver, tcp::socket&& socket, const ServerSettings& settings);
     ~ControlSessionTcp() override;
     void start() override;
     void stop() override;
@@ -43,16 +51,12 @@ public:
     /// Sends a message to the client (asynchronous)
     void sendAsync(const std::string& message) override;
 
-protected:
+private:
     void do_read();
     void send_next();
 
     tcp::socket socket_;
     boost::asio::streambuf streambuf_;
-    net::strand<net::any_io_executor> strand_;
+    boost::asio::strand<boost::asio::any_io_executor> strand_;
     std::deque<std::string> messages_;
 };
-
-
-
-#endif

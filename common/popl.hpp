@@ -3,7 +3,7 @@
     (  _ \ /  \(  _ \(  )
      ) __/(  O )) __// (_/\
     (__)   \__/(__)  \____/
-    version 1.3.0
+    version 1.3.1
     https://github.com/badaix/popl
 
     This file is part of popl (program options parser lib)
@@ -483,7 +483,7 @@ public:
     std::string print(const Attribute& max_attribute = Attribute::optional) const override;
 
 private:
-    std::string to_string(Option_ptr option) const;
+    std::string to_string(const Option_ptr& option) const;
 };
 
 
@@ -501,7 +501,7 @@ public:
     std::string print(const Attribute& max_attribute = Attribute::optional) const override;
 
 private:
-    std::string to_string(Option_ptr option) const;
+    std::string to_string(const Option_ptr& option) const;
 };
 
 
@@ -943,26 +943,31 @@ inline std::shared_ptr<T> OptionParser::get_option(char short_name) const
 inline void OptionParser::parse(const std::string& ini_filename)
 {
     std::ifstream file(ini_filename.c_str());
-    std::string line;
+    if (file.fail())
+        throw std::invalid_argument("cannot open file: '" + ini_filename + "'");
 
-    auto trim = [](std::string& s) {
+    auto trim = [](std::string& s)
+    {
         s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](int ch) { return !std::isspace(ch); }));
         s.erase(std::find_if(s.rbegin(), s.rend(), [](int ch) { return !std::isspace(ch); }).base(), s.end());
         return s;
     };
 
-    auto trim_copy = [trim](const std::string& s) {
+    auto trim_copy = [trim](const std::string& s)
+    {
         std::string copy(s);
         return trim(copy);
     };
 
-    auto split = [trim_copy](const std::string& s) -> std::pair<std::string, std::string> {
+    auto split = [trim_copy](const std::string& s) -> std::pair<std::string, std::string>
+    {
         size_t pos = s.find('=');
         if (pos == std::string::npos)
             return {"", ""};
         return {trim_copy(s.substr(0, pos)), trim_copy(s.substr(pos + 1, std::string::npos))};
     };
 
+    std::string line;
     std::string section;
     while (std::getline(file, line))
     {
@@ -1119,7 +1124,7 @@ inline ConsoleOptionPrinter::ConsoleOptionPrinter(const OptionParser* option_par
 }
 
 
-inline std::string ConsoleOptionPrinter::to_string(Option_ptr option) const
+inline std::string ConsoleOptionPrinter::to_string(const Option_ptr& option) const
 {
     std::stringstream line;
     if (option->short_name() != 0)
@@ -1139,7 +1144,7 @@ inline std::string ConsoleOptionPrinter::to_string(Option_ptr option) const
         std::stringstream defaultStr;
         if (option->get_default(defaultStr))
         {
-            if (!defaultStr.str().empty())
+            if (!defaultStr.str().empty() && (defaultStr.str() != "\"\""))
                 line << " (=" << defaultStr.str() << ")";
         }
     }
@@ -1164,7 +1169,7 @@ inline std::string ConsoleOptionPrinter::print(const Attribute& max_attribute) c
 
     std::stringstream s;
     if (!option_parser_->description().empty())
-        s << option_parser_->description() << ":\n";
+        s << option_parser_->description() << "\n";
 
     size_t optionRightMargin(20);
     const size_t maxDescriptionLeftMargin(40);
@@ -1213,7 +1218,7 @@ inline GroffOptionPrinter::GroffOptionPrinter(const OptionParser* option_parser)
 }
 
 
-inline std::string GroffOptionPrinter::to_string(Option_ptr option) const
+inline std::string GroffOptionPrinter::to_string(const Option_ptr& option) const
 {
     std::stringstream line;
     if (option->short_name() != 0)

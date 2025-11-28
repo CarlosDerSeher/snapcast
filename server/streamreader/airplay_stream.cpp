@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2021  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,12 +20,14 @@
 #include "airplay_stream.hpp"
 
 // local headers
-#include "base64.h"
 #include "common/aixlog.hpp"
+#include "common/base64.h"
 #include "common/snap_exception.hpp"
-#include "common/utils.hpp"
 #include "common/utils/file_utils.hpp"
-#include "common/utils/string_utils.hpp"
+
+// standard headers
+#include <memory>
+
 
 using namespace std;
 
@@ -40,8 +42,9 @@ string hex2str(const string& input)
 {
     using byte = unsigned char;
     unsigned long x = strtoul(input.c_str(), nullptr, 16);
+    // NOLINTNEXTLINE
     byte a[] = {byte(x >> 24), byte(x >> 16), byte(x >> 8), byte(x), 0};
-    return string(reinterpret_cast<char*>(a));
+    return reinterpret_cast<char*>(a);
 }
 } // namespace
 
@@ -50,15 +53,16 @@ string hex2str(const string& input)
  * Without HAS_EXPAT defined no parsing will occur.
  */
 
-AirplayStream::AirplayStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri)
-    : ProcessStream(pcmListener, ioc, server_settings, uri), port_(5000), pipe_open_timer_(ioc)
+AirplayStream::AirplayStream(PcmStream::Listener* pcmListener, boost::asio::io_context& ioc, const ServerSettings& server_settings, const StreamUri& uri,
+                             PcmStream::Source source)
+    : ProcessStream(pcmListener, ioc, server_settings, uri, source), port_(5000), pipe_open_timer_(ioc)
 {
     logStderr_ = true;
 
     string devicename = uri_.getQuery("devicename", "Snapcast");
     string password = uri_.getQuery("password", "");
 
-    params_wo_port_ = "\"--name=" + devicename + "\" --output=stdout --use-stderr --get-coverart";
+    params_wo_port_ = "\"--name=" + devicename + "\" --output=stdout --get-coverart";
     if (!password.empty())
         params_wo_port_ += " --password \"" + password + "\"";
     if (!params_.empty())
@@ -71,8 +75,7 @@ AirplayStream::AirplayStream(PcmStream::Listener* pcmListener, boost::asio::io_c
     createParser();
     metadata_dirty_ = false;
 #else
-    LOG(INFO, LOG_TAG) << "Metadata support not enabled (HAS_EXPAT not defined)"
-                       << "\n";
+    LOG(INFO, LOG_TAG) << "Metadata support not enabled (HAS_EXPAT not defined)" << "\n";
 #endif
 }
 
@@ -209,16 +212,16 @@ void AirplayStream::setParamsAndPipePathFromPort()
 }
 
 
-void AirplayStream::do_connect()
+void AirplayStream::connect()
 {
-    ProcessStream::do_connect();
+    ProcessStream::connect();
     pipeReadLine();
 }
 
 
-void AirplayStream::do_disconnect()
+void AirplayStream::disconnect()
 {
-    ProcessStream::do_disconnect();
+    ProcessStream::disconnect();
     // Shairpot-sync created but does not remove the pipe
     if (utils::file::exists(pipePath_) && (remove(pipePath_.c_str()) != 0))
         LOG(INFO, LOG_TAG) << "Failed to remove metadata pipe \"" << pipePath_ << "\": " << errno << "\n";
@@ -245,15 +248,18 @@ void AirplayStream::pipeReadLine()
     }
 
     const std::string delimiter = "\n";
-    boost::asio::async_read_until(*pipe_fd_, streambuf_pipe_, delimiter, [this, delimiter](const std::error_code& ec, std::size_t bytes_transferred) {
+    boost::asio::async_read_until(*pipe_fd_, streambuf_pipe_, delimiter, [this, delimiter](const std::error_code& ec, std::size_t bytes_transferred)
+    {
         if (ec)
         {
             if ((ec.value() == boost::asio::error::eof) || (ec.value() == boost::asio::error::bad_descriptor))
             {
                 // For some reason, EOF is returned until the first metadata is written to the pipe.
                 // If shairport-sync has not finished setting up the pipe, bad file descriptor is returned.
-                LOG(INFO, LOG_TAG) << "Waiting for metadata, retrying in 2500ms\n";
-                wait(pipe_open_timer_, 2500ms, [this] { pipeReadLine(); });
+                static constexpr auto retry_ms = 2500ms;
+                LOG(read_logseverity_, LOG_TAG) << "Waiting for metadata, retrying in " << retry_ms.count() << "ms\n";
+                read_logseverity_ = AixLog::Severity::debug;
+                wait(pipe_open_timer_, retry_ms, [this] { pipeReadLine(); });
             }
             else
             {
@@ -261,6 +267,7 @@ void AirplayStream::pipeReadLine()
             }
             return;
         }
+        read_logseverity_ = AixLog::Severity::info;
 
         // Extract up to the first delimiter.
         std::string line{buffers_begin(streambuf_pipe_.data()), buffers_begin(streambuf_pipe_.data()) + bytes_transferred - delimiter.length()};
@@ -322,7 +329,7 @@ void XMLCALL AirplayStream::element_start(void* userdata, const char* element_na
 
     self->buf_.assign("");
     if (name == "item")
-        self->entry_.reset(new TageEntry);
+        self->entry_ = std::make_unique<TageEntry>();
 
     for (int i = 0; attr[i] != nullptr; i += 2)
     {

@@ -1,6 +1,6 @@
 /***
     This file is part of snapcast
-    Copyright (C) 2014-2020  Johannes Pohl
+    Copyright (C) 2014-2025  Johannes Pohl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,24 +16,35 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#ifndef NULL_ENCODER_HPP
-#define NULL_ENCODER_HPP
+#pragma once
+
+// local headers
 #include "encoder.hpp"
+
 
 namespace encoder
 {
 
+/// Null Encoder class
+/**
+ * Dummy encoder that will not encode any PcmChunk and thus will also never call
+ * "Encoder::encoded_callback_", i.e. the "OnEncodedCallback" to report any encoded data
+ * to the listener.
+ * Typically used as input stream for a MetaStream, which will do it's own encoding.
+ * Streams that use the null encoder cannot be listened to directly, nor they are visible
+ * on the RPC interface.
+ */
 class NullEncoder : public Encoder
 {
 public:
-    NullEncoder(const std::string& codecOptions = "");
+    /// c'tor
+    explicit NullEncoder(std::string codecOptions);
+
     void encode(const msg::PcmChunk& chunk) override;
     std::string name() const override;
 
-protected:
+private:
     void initEncoder() override;
 };
 
 } // namespace encoder
-
-#endif
